@@ -481,7 +481,7 @@
   <div id="settingsModal" class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-xs z-50 flex items-end sm:items-center justify-center p-4">
     <div class="bg-white w-full max-w-md rounded-3xl p-6 space-y-4 shadow-2xl max-h-[85vh] overflow-y-auto">
       <div class="flex items-center justify-between">
-        <h3 class="text-lg font-black text-slate-800">設定 <span class="text-[10px] font-bold text-slate-400">v7</span></h3>
+        <h3 class="text-lg font-black text-slate-800">設定 <span class="text-[10px] font-bold text-slate-400">v8</span></h3>
         <button id="closeSettingsBtn" type="button" class="w-8 h-8 rounded-full bg-slate-100 text-slate-500 font-bold">✕</button>
       </div>
 
@@ -546,7 +546,6 @@
     function getUserApiKey() {
       try { return (localStorage.getItem(API_KEY_STORAGE) || "").trim(); } catch (_) { return ""; }
     }
-    const MODEL_NAME = "gemini-2.5-flash";
     const MAX_MEDIA_ITEMS = 6;
     const MAX_BASELINE_ITEMS = 4;
 
@@ -1182,37 +1181,49 @@
     });
 
     // Gemini API 呼び出し（ラベル付きマルチモーダルパーツ対応）
+    // 使えるモデルを順に試す（提供終了・アクセス制限で 404 になったら次へ）。成功したモデルは記憶して次回から最初に使う
+    const MODEL_CANDIDATES = ["gemini-3.8-flash", "gemini-flash-latest", "gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-2.5-flash"];
+    const MODEL_STORAGE = "okatazuke_gemini_model";
+    function modelOrder() {
+      let saved = "";
+      try { saved = localStorage.getItem(MODEL_STORAGE) || ""; } catch (_) {}
+      return saved ? [saved, ...MODEL_CANDIDATES.filter((m) => m !== saved)] : [...MODEL_CANDIDATES];
+    }
+
     async function callGeminiWithLabeledParts(contentParts) {
       const userKey = getUserApiKey();
-      // 設定で入れたキーがあればヘッダーで送る（URLに残さない）。なければ従来どおり（プレビュー環境がキーを補う）
-      const url = userKey
-        ? `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent`
-        : `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent?key=${apiKey}`;
       const headers = { "Content-Type": "application/json" };
-      if (userKey) headers["x-goog-api-key"] = userKey;
-      const res = await fetch(url, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-          contents: [{ role: "user", parts: contentParts }],
-          generationConfig: {
-            responseMimeType: "application/json",
-            temperature: 0.15
-          }
-        })
+      if (userKey) headers["x-goog-api-key"] = userKey; // キーはURLに載せずヘッダーで送る
+      const body = JSON.stringify({
+        contents: [{ role: "user", parts: contentParts }],
+        generationConfig: { responseMimeType: "application/json", temperature: 0.15 }
       });
 
-      if (!res.ok) {
-        if (res.status === 400 || res.status === 403) {
-          throw new Error(getUserApiKey()
+      let lastStatus = 0;
+      for (const model of modelOrder()) {
+        const base = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+        const url = userKey ? base : `${base}?key=${apiKey}`;
+        const res = await fetch(url, { method: "POST", headers, body });
+        if (res.ok) {
+          try { localStorage.setItem(MODEL_STORAGE, model); } catch (_) {}
+          const data = await res.json();
+          const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
+          return JSON.parse(rawText.replace(/^```(?:json)?\s*|\s*```$/g, ""));
+        }
+        lastStatus = res.status;
+        if (res.status === 404) {
+          try { if (localStorage.getItem(MODEL_STORAGE) === model) localStorage.removeItem(MODEL_STORAGE); } catch (_) {}
+          continue; // このモデルは使えない → 次の候補へ
+        }
+        if (res.status === 400 || res.status === 401 || res.status === 403) {
+          throw new Error(userKey
             ? "APIキーが無効です。⚙️設定のGemini APIキーを確認してください。"
             : "APIキーが未設定です。⚙️設定の「Gemini APIキー」に入れて保存してください。");
         }
+        if (res.status === 429) throw new Error("Geminiの無料枠の上限に達しました。少し待ってからもう一度お試しください。");
         throw new Error(`API通信エラー (${res.status})`);
       }
-      const data = await res.json();
-      const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
-      return JSON.parse(rawText);
+      throw new Error(`使えるGeminiモデルが見つかりませんでした (${lastStatus})`);
     }
 
     // 決定論的スコア算出
