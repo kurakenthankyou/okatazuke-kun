@@ -1,0 +1,2070 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>おかたづけくん</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@500;700;900&display=swap" rel="stylesheet">
+  <style>
+    body {
+      font-family: 'Zen Maru Gothic', -apple-system, BlinkMacSystemFont, sans-serif;
+      background-color: #F4F7F6;
+      color: #1E293B;
+      -webkit-tap-highlight-color: transparent;
+    }
+    @keyframes pulseRing {
+      0% { transform: translate(-50%, -50%) scale(0.9); opacity: 0.9; }
+      70% { transform: translate(-50%, -50%) scale(2.1); opacity: 0; }
+      100% { transform: translate(-50%, -50%) scale(2.1); opacity: 0; }
+    }
+    .pulse-ring {
+      animation: pulseRing 1.8s infinite cubic-bezier(0.215, 0.61, 0.355, 1);
+    }
+    @keyframes dashMove {
+      to { stroke-dashoffset: -24; }
+    }
+    .animate-dash {
+      animation: dashMove 1s linear infinite;
+    }
+    @keyframes micPulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(244, 63, 94, 0.45); }
+      50% { box-shadow: 0 0 0 8px rgba(244, 63, 94, 0); }
+    }
+    .mic-active {
+      animation: micPulse 1.5s infinite;
+    }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col max-w-md mx-auto bg-[#F4F7F6] shadow-xl">
+
+  <!-- シンプルヘッダー -->
+  <header class="px-5 pt-4 pb-3 flex items-center justify-between bg-white/85 backdrop-blur-md sticky top-0 z-30 border-b border-slate-100">
+    <div class="flex items-center gap-2.5">
+      <div class="w-9 h-9 rounded-2xl bg-emerald-500 flex items-center justify-center text-white text-lg shadow-sm">
+        ✨
+      </div>
+      <h1 class="text-xl font-black tracking-tight text-slate-800">おかたづけくん</h1>
+    </div>
+    <button id="openSettingsBtn" type="button" aria-label="設定" class="w-10 h-10 rounded-full bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-600 transition active:scale-95">
+      <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+        <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+      </svg>
+    </button>
+  </header>
+
+  <!-- メインコンテンツ -->
+  <main class="flex-1 px-4 pt-4 pb-28 space-y-4">
+
+    <!-- タイミング通知バナー -->
+    <div id="timingBanner" class="hidden rounded-2xl px-4 py-3 bg-amber-50 border border-amber-200 flex items-center gap-3 shadow-sm">
+      <span class="text-xl shrink-0">⏰</span>
+      <p id="timingText" class="text-xs font-bold text-amber-900 leading-snug"></p>
+    </div>
+
+    <!-- カスタムメッセージボックス（alert代替） -->
+    <div id="messageToast" class="hidden rounded-2xl px-4 py-3 bg-slate-800 text-white text-xs font-bold flex items-center justify-between gap-2 shadow-lg">
+      <span id="messageToastText"></span>
+      <button id="closeMessageToastBtn" type="button" class="text-slate-300 hover:text-white px-1.5">✕</button>
+    </div>
+
+    <!-- モード1：お片付け診断＆音声・ビジュアルナビ -->
+    <section id="tidyView" class="space-y-4">
+
+      <!-- 散らかり度カード -->
+      <div class="bg-white rounded-3xl p-5 shadow-sm border border-slate-100 flex items-center justify-between">
+        <div>
+          <p class="text-xs font-bold text-slate-400 mb-1">現在の散らかり度</p>
+          <div class="flex items-baseline gap-1">
+            <span id="clutterPercent" class="text-4xl font-black text-slate-800">--</span>
+            <span class="text-lg font-extrabold text-slate-400">%</span>
+          </div>
+          <p id="paceSubtext" class="hidden text-xs font-bold text-emerald-600 mt-1.5"></p>
+        </div>
+
+        <!-- 円形メーター -->
+        <div class="relative w-20 h-20 flex items-center justify-center">
+          <svg class="w-20 h-20 -rotate-90" viewBox="0 0 80 80">
+            <circle cx="40" cy="40" r="32" fill="none" stroke="#F1F5F9" stroke-width="8" />
+            <circle id="clutterRing" cx="40" cy="40" r="32" fill="none" stroke="#10B981" stroke-width="8"
+              stroke-linecap="round" stroke-dasharray="201" stroke-dashoffset="201" class="transition-all duration-700" />
+          </svg>
+          <span id="clutterEmoji" class="absolute text-2xl">🏠</span>
+        </div>
+      </div>
+
+      <!-- カメラ・複数写真・動画撮影ボックス（待機中） -->
+      <div id="captureBox" class="bg-white rounded-3xl p-5 shadow-sm border border-slate-100 space-y-4">
+        <div class="flex items-center justify-between">
+          <div id="baselineBadge" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-slate-100 text-slate-500">
+            <span>📷 きれいな部屋：未登録</span>
+          </div>
+          <span id="mediaCountBadge" class="text-xs font-black text-emerald-600">0 / 6 枚</span>
+        </div>
+
+        <!-- 3分だけクイック切替トグル -->
+        <div class="flex items-center justify-between bg-slate-50 px-4 py-2.5 rounded-2xl border border-slate-100">
+          <div class="text-left">
+            <p class="text-xs font-black text-slate-700 flex items-center gap-1">
+              <span>⚡</span><span>3分だけクイック片付け</span>
+            </p>
+            <p class="text-[11px] font-bold text-slate-400">一番散らかっている1エリアだけを集中ナビ</p>
+          </div>
+          <label class="relative inline-flex items-center cursor-pointer">
+            <input id="quickModeToggle" type="checkbox" class="sr-only peer" />
+            <div class="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-amber-500"></div>
+          </label>
+        </div>
+
+        <!-- 事前マイク許可トグル（音声認識対応環境のみ自動表示） -->
+        <div id="preMicRow" class="hidden flex items-center justify-between bg-slate-50 px-4 py-2.5 rounded-2xl border border-slate-100">
+          <div class="text-left">
+            <p class="text-xs font-black text-slate-700 flex items-center gap-1">
+              <span>🎙️</span><span>ハンズフリー音声操作</span>
+            </p>
+            <p class="text-[11px] font-bold text-slate-400">撮影前にマイクを許可して「できた」で進む</p>
+          </div>
+          <label class="relative inline-flex items-center cursor-pointer">
+            <input id="preMicToggle" type="checkbox" class="sr-only peer" />
+            <div class="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-rose-500"></div>
+          </label>
+        </div>
+
+        <!-- 選択・撮影済みサムネイル一覧（複数写真＆動画フレーム） -->
+        <div id="mediaQueueWrap" class="hidden space-y-2">
+          <div class="flex items-center justify-between">
+            <p class="text-xs font-black text-slate-600">解析する写真・シーン一覧</p>
+            <button id="clearMediaQueueBtn" type="button" class="text-[11px] font-bold text-rose-500 hover:underline">すべてクリア</button>
+          </div>
+          <div id="mediaThumbGrid" class="grid grid-cols-3 gap-2"></div>
+        </div>
+
+        <!-- 複数写真追加 ＆ 動画撮影・選択ボタン -->
+        <div class="grid grid-cols-2 gap-2.5">
+          <label class="cursor-pointer">
+            <input id="multiPhotoInput" type="file" accept="image/*" multiple class="sr-only" />
+            <div class="py-3.5 px-3 rounded-2xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-700 font-black text-xs text-center transition flex flex-col items-center justify-center gap-1 active:scale-95">
+              <span class="text-xl">📸</span>
+              <span>写真を追加 (複数OK)</span>
+            </div>
+          </label>
+
+          <label class="cursor-pointer">
+            <input id="roomVideoInput" type="file" accept="video/*" class="sr-only" />
+            <div class="py-3.5 px-3 rounded-2xl bg-teal-50 hover:bg-teal-100 border border-teal-200 text-teal-700 font-black text-xs text-center transition flex flex-col items-center justify-center gap-1 active:scale-95">
+              <span class="text-xl">🎥</span>
+              <span>部屋を動画で撮る</span>
+            </div>
+          </label>
+        </div>
+
+        <!-- 今すぐ1枚撮る / まとめて解析開始ボタン -->
+        <div id="directSnapWrap">
+          <label class="block w-full cursor-pointer">
+            <input id="singleCameraInput" type="file" accept="image/*" capture="environment" class="sr-only" />
+            <div class="w-full py-4 px-6 rounded-2xl bg-emerald-500 hover:bg-emerald-600 active:scale-[0.98] text-white font-black text-base shadow-lg shadow-emerald-500/25 transition flex items-center justify-center gap-2.5">
+              <span>📷</span>
+              <span>カメラで今すぐ撮って開始</span>
+            </div>
+          </label>
+        </div>
+
+        <button id="startMultiAnalyzeBtn" type="button" class="hidden w-full py-4 px-6 rounded-2xl bg-emerald-500 hover:bg-emerald-600 active:scale-[0.98] text-white font-black text-base shadow-lg shadow-emerald-500/25 transition flex items-center justify-center gap-2">
+          <span>✨</span>
+          <span id="startMultiAnalyzeLabel">選択した画像をまとめて解析</span>
+        </button>
+      </div>
+
+      <!-- 動画フレーム抽出中ローディング -->
+      <div id="videoExtractBox" class="hidden bg-white rounded-3xl p-7 shadow-sm border border-slate-100 text-center space-y-3">
+        <div class="w-11 h-11 mx-auto rounded-full border-4 border-teal-100 border-t-teal-500 animate-spin"></div>
+        <p class="font-extrabold text-slate-700 text-sm">動画から部屋のシーンを自動抽出中...</p>
+        <p class="text-xs text-slate-400">部屋全体が見渡せる5つの場面を切り出しています</p>
+      </div>
+
+      <!-- AI解析ローディング表示 -->
+      <div id="loadingBox" class="hidden bg-white rounded-3xl p-8 shadow-sm border border-slate-100 text-center space-y-3">
+        <div class="w-12 h-12 mx-auto rounded-full border-4 border-emerald-100 border-t-emerald-500 animate-spin"></div>
+        <p class="font-extrabold text-slate-700">部屋全体の最短ルートを計算中...</p>
+        <p class="text-xs text-slate-400">複数の写真をつないで最適な片付け順を組み立てています</p>
+      </div>
+
+      <!-- ステップ実行＆クロス空間マーキングカード -->
+      <div id="stepCard" class="hidden bg-white rounded-3xl p-4 shadow-md border border-emerald-100 space-y-3">
+
+        <!-- ステップ進捗＆クイック表示＆クロス空間バッジ -->
+        <div class="flex items-center justify-between gap-2 flex-wrap">
+          <div class="flex items-center gap-1.5 flex-wrap">
+            <span id="stepCounter" class="px-3 py-1 rounded-full bg-emerald-50 text-emerald-700 text-xs font-black">
+              ステップ 1 / 1
+            </span>
+            <span id="quickBadge" class="hidden px-2 py-1 rounded-full bg-amber-100 text-amber-800 text-[10px] font-black">
+              ⚡3分集中
+            </span>
+            <span id="unifiedRoomBadge" class="hidden px-2 py-1 rounded-full bg-teal-50 text-teal-700 border border-teal-200 text-[10px] font-black">
+              🏠 同一空間統合・重複除外
+            </span>
+            <span id="crossPhotoBadge" class="hidden px-2 py-1 rounded-full bg-indigo-100 text-indigo-700 text-[10px] font-black">
+              🔄 別の場所へ移動
+            </span>
+          </div>
+
+          <!-- 基準写真があるときの切り替えタブ -->
+          <div id="photoSwitchWrap" class="hidden flex bg-slate-100 p-0.5 rounded-xl text-[11px] font-bold">
+            <button id="showCurrentPhotoBtn" type="button" class="px-2.5 py-1 rounded-lg bg-white text-slate-800 shadow-xs transition">
+              今の部屋
+            </button>
+            <button id="showBaselinePhotoBtn" type="button" class="px-2.5 py-1 rounded-lg text-slate-500 transition">
+              きれいな基準
+            </button>
+          </div>
+        </div>
+
+        <!-- パターンA：同一写真内のマーキングビューア -->
+        <div id="samePhotoViewer" class="relative w-full rounded-2xl overflow-hidden bg-slate-900 border border-slate-200 select-none flex justify-center">
+          <div id="samePhotoTag" class="absolute top-2 left-2 z-10 px-2.5 py-0.5 rounded-full bg-black/65 text-white text-[10px] font-black backdrop-blur-xs">
+            写真 1
+          </div>
+          <div id="annotatedBox" class="relative inline-block">
+<img id="annotatedImg" src="" alt="部屋の写真" class="block max-h-72 max-w-full w-auto h-auto" />
+
+          <!-- SVG 矢印レイヤー -->
+          <svg id="arrowOverlay" class="absolute inset-0 w-full h-full pointer-events-none" viewBox="0 0 100 100" preserveAspectRatio="none">
+            <defs>
+              <marker id="arrowhead" markerWidth="6" markerHeight="6" refX="4.5" refY="3" orient="auto">
+                <path d="M0,0.8 L5,3 L0,5.2 Z" fill="#10B981" />
+              </marker>
+            </defs>
+            <line id="moveArrowLine" x1="0" y1="0" x2="0" y2="0"
+              stroke="#FFFFFF" stroke-width="1.3" stroke-linecap="round" opacity="0.85" />
+            <line id="moveArrowDash" x1="0" y1="0" x2="0" y2="0"
+              stroke="#10B981" stroke-width="0.8" stroke-dasharray="2.2,1.6" stroke-linecap="round"
+              marker-end="url(#arrowhead)" class="animate-dash" />
+          </svg>
+
+          <!-- 赤マーカー（今の場所） -->
+          <div id="fromMarker" class="absolute pointer-events-none transition-all duration-300" style="left: 30%; top: 40%;">
+            <div class="relative">
+              <div class="absolute w-7 h-7 rounded-full bg-rose-500/45 pulse-ring"></div>
+              <div class="w-3.5 h-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-rose-500 border-2 border-white shadow-md"></div>
+              <div id="fromLabel" class="absolute left-1/2 -translate-x-1/2 px-2 py-0.5 rounded-full bg-rose-600/95 text-white text-[10px] font-black whitespace-nowrap shadow-md border border-white/80 flex items-center gap-1">
+                <span>📍</span><span id="fromLabelText">対象物</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 緑マーカー（しまう場所） -->
+          <div id="toMarker" class="absolute pointer-events-none transition-all duration-300" style="left: 70%; top: 60%;">
+            <div class="relative">
+              <div class="w-4 h-4 -translate-x-1/2 -translate-y-1/2 rounded-full bg-emerald-500 border-2 border-white shadow-md flex items-center justify-center">
+                <div class="w-1.5 h-1.5 rounded-full bg-white"></div>
+              </div>
+              <div id="toLabel" class="absolute left-1/2 -translate-x-1/2 px-2 py-0.5 rounded-full bg-emerald-600/95 text-white text-[10px] font-black whitespace-nowrap shadow-md border border-white/80 flex items-center gap-1">
+                <span>🎯</span><span id="toLabelText">ここへしまう</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        </div>
+
+        <!-- パターンB：別の写真へまたがるクロス空間2枚連携ビジュアルカード -->
+        <div id="crossPhotoViewer" class="hidden space-y-2">
+          <div class="grid grid-cols-2 gap-2 items-stretch">
+            <!-- 左：From写真（今の場所） -->
+            <div class="relative rounded-2xl overflow-hidden bg-slate-900 border-2 border-rose-400 h-44 flex items-center justify-center">
+              <span id="crossFromPhotoTag" class="absolute top-1.5 left-1.5 z-10 px-2 py-0.5 rounded-full bg-rose-600 text-white text-[10px] font-black shadow-xs">
+                写真① ここから
+              </span>
+              <div class="relative inline-block">
+              <img id="crossFromImg" src="" alt="今の場所の写真" class="block max-h-44 max-w-full w-auto h-auto" />
+              <div id="crossFromPin" class="absolute pointer-events-none" style="left: 50%; top: 50%;">
+                <div class="relative">
+                  <div class="absolute w-7 h-7 rounded-full bg-rose-500/50 pulse-ring"></div>
+                  <div class="w-3.5 h-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-rose-500 border-2 border-white shadow-md"></div>
+                  <div id="crossFromLabel" class="absolute left-1/2 -translate-x-1/2 top-3 max-w-[8.5rem] truncate px-2 py-0.5 rounded-full bg-rose-600/95 text-white text-[10px] font-black whitespace-nowrap shadow-md border border-white/80">
+                    対象物
+                  </div>
+                </div>
+              </div>
+              </div>
+            </div>
+
+            <!-- 右：To写真（しまう先） -->
+            <div class="relative rounded-2xl overflow-hidden bg-slate-900 border-2 border-emerald-400 h-44 flex items-center justify-center">
+              <span id="crossToPhotoTag" class="absolute top-1.5 left-1.5 z-10 px-2 py-0.5 rounded-full bg-emerald-600 text-white text-[10px] font-black shadow-xs">
+                写真② ここへ
+              </span>
+              <div class="relative inline-block">
+              <img id="crossToImg" src="" alt="しまう先の写真" class="block max-h-44 max-w-full w-auto h-auto" />
+              <div id="crossToPin" class="absolute pointer-events-none" style="left: 50%; top: 50%;">
+                <div class="relative">
+                  <div class="absolute w-7 h-7 rounded-full bg-emerald-400/50 pulse-ring"></div>
+                  <div class="w-4 h-4 -translate-x-1/2 -translate-y-1/2 rounded-full bg-emerald-500 border-2 border-white shadow-md flex items-center justify-center">
+                    <div class="w-1.5 h-1.5 rounded-full bg-white"></div>
+                  </div>
+                  <div id="crossToLabel" class="absolute left-1/2 -translate-x-1/2 top-3 max-w-[8.5rem] truncate px-2 py-0.5 rounded-full bg-emerald-600/95 text-white text-[10px] font-black whitespace-nowrap shadow-md border border-white/80">
+                    しまう先
+                  </div>
+                </div>
+              </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="flex items-center justify-center gap-2 py-1 px-3 rounded-xl bg-indigo-50 text-indigo-800 text-[11px] font-black">
+            <span id="crossBridgeText">写真① で拾って → 写真② へ運びます</span>
+          </div>
+        </div>
+
+        <!-- ハンズフリー連続音声マイクバー -->
+        <div class="flex items-center justify-between bg-slate-50 px-3.5 py-2 rounded-2xl border border-slate-100">
+          <div id="handsFreeControls" class="flex items-center gap-2 flex-1 min-w-0">
+            <button id="toggleHandsFreeBtn" type="button" class="shrink-0 whitespace-nowrap px-3 py-1.5 rounded-xl bg-white border border-slate-200 text-slate-700 text-xs font-black flex items-center gap-1.5 shadow-2xs transition">
+              <span id="micIcon">🎙️</span>
+              <span id="micBtnText">声で次へ OFF</span>
+            </button>
+            <span id="voiceHeardHint" class="min-w-0 truncate text-[11px] font-bold text-slate-400">「できた」で次へ</span>
+          </div>
+          <span id="previewNoMicNote" class="hidden min-w-0 truncate text-[11px] font-bold text-slate-400">
+            🔊 音声ガイド再生中（公開URLでは声操作も可）
+          </span>
+          <button id="replayVoiceBtn" type="button" class="w-8 h-8 rounded-xl bg-white border border-slate-200 text-slate-600 flex items-center justify-center text-sm active:scale-95 ml-auto" title="もう一度聞く">
+            🔊
+          </button>
+        </div>
+
+        <!-- 音声指示テキスト -->
+        <div class="bg-emerald-50/50 rounded-2xl p-3.5 border border-emerald-100/80">
+          <p id="stepTitle" class="text-base font-black text-slate-800 leading-snug"></p>
+          <p id="stepDetail" class="text-xs font-bold text-slate-600 mt-1 leading-relaxed"></p>
+        </div>
+
+        <!-- 完了ボタン -->
+        <button id="nextStepBtn" type="button" class="w-full py-3.5 px-5 rounded-2xl bg-emerald-500 hover:bg-emerald-600 active:scale-[0.98] text-white font-black text-base shadow-md shadow-emerald-500/20 transition">
+          できた・次へ ✓
+        </button>
+      </div>
+
+      <!-- 完了＆ビフォーアフター達成カード生成ビュー -->
+      <div id="completeCard" class="hidden bg-white rounded-3xl p-5 shadow-sm border border-emerald-100 space-y-4">
+        <div class="text-center space-y-1">
+          <div class="text-4xl">🎉</div>
+          <h2 class="text-xl font-black text-slate-800">お片付け完了！</h2>
+          <p id="completeSummaryText" class="text-xs text-slate-500 font-bold">
+            片付いた後の部屋を撮ると、AIが本当に片付いたか判定して達成カードを作ります
+          </p>
+        </div>
+
+        <!-- アフター撮影ボタン -->
+        <div id="afterCaptureWrap">
+          <label class="block w-full cursor-pointer">
+            <input id="afterPhotoInput" type="file" accept="image/*" capture="environment" class="sr-only" />
+            <div class="w-full py-4 px-5 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-500 text-white font-black text-sm shadow-md transition flex items-center justify-center gap-2 active:scale-[0.98]">
+              <span>📸</span>
+              <span>片付いた部屋を撮って達成カード作成</span>
+            </div>
+          </label>
+        </div>
+
+        <!-- ビフォー・アフター スライド比較ビューア -->
+        <div id="beforeAfterWrap" class="hidden space-y-3">
+          <div class="flex items-center justify-between text-xs font-black">
+            <span class="px-2.5 py-1 rounded-full bg-rose-100 text-rose-700" id="baBeforeBadge">BEFORE 72%</span>
+            <span class="text-slate-400">◀ スライド比較 ▶</span>
+            <span class="px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-700" id="baAfterBadge">AFTER 0%</span>
+          </div>
+
+          <div id="baSliderContainer" class="relative w-full h-64 rounded-2xl overflow-hidden bg-slate-900 select-none border border-slate-200">
+            <img id="baAfterImg" src="" alt="片付いた部屋" class="absolute inset-0 w-full h-full object-cover" />
+            <div id="baBeforeClip" class="absolute inset-0 overflow-hidden" style="width: 50%;">
+              <img id="baBeforeImg" src="" alt="散らかった部屋" class="w-full h-full object-cover max-w-none" />
+            </div>
+            <div id="baDivider" class="absolute top-0 bottom-0 w-0.5 bg-white shadow-lg pointer-events-none" style="left: 50%;">
+              <div class="absolute top-1/2 -translate-x-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-white text-slate-700 shadow-md flex items-center justify-center text-xs font-black">
+                ⇄
+              </div>
+            </div>
+            <input id="baRangeInput" type="range" min="0" max="100" value="50"
+              class="absolute inset-0 w-full h-full opacity-0 cursor-ew-resize z-10" />
+          </div>
+
+          <button id="downloadCardBtn" type="button" class="w-full py-3 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-sm shadow-sm transition flex items-center justify-center gap-2">
+            <span>🖼️</span><span>達成カード画像を保存・シェア</span>
+          </button>
+        </div>
+
+        <button id="resetToHomeBtn" type="button" class="w-full py-3 rounded-2xl bg-slate-100 text-slate-700 font-black text-sm active:scale-95 transition">
+          トップに戻る
+        </button>
+      </div>
+
+    </section>
+
+    <!-- モード2：置き場所を聞く -->
+    <section id="placeView" class="hidden space-y-4">
+      <div class="bg-white rounded-3xl p-5 shadow-sm border border-slate-100 space-y-4">
+        <div>
+          <h2 class="text-lg font-black text-slate-800">どこに置くと美しい？</h2>
+          <p class="text-xs font-bold text-slate-400 mt-0.5">
+            棚や机の写真を複数枚撮って比較もOK！ベスト位置をマークして記憶します
+          </p>
+        </div>
+
+        <input id="itemNameInput" type="text" placeholder="置きたい物（例：ボードゲーム、マグカップ）"
+          class="w-full px-4 py-3 rounded-2xl bg-slate-50 border border-slate-200 text-sm font-bold text-slate-700 focus:outline-none focus:border-sky-400" />
+
+        <label class="block w-full cursor-pointer">
+          <input id="placePhotoInput" type="file" accept="image/*" multiple class="sr-only" />
+          <div class="w-full py-4 px-5 rounded-2xl bg-sky-500 hover:bg-sky-600 active:scale-[0.98] text-white font-black text-base shadow-lg shadow-sky-500/20 transition flex items-center justify-center gap-2.5">
+            <span class="text-xl">📸</span>
+            <span>候補の場所を撮る・選ぶ（複数可）</span>
+          </div>
+        </label>
+      </div>
+
+      <!-- ローディング -->
+      <div id="placeLoading" class="hidden bg-white rounded-3xl p-8 text-center space-y-3 border border-slate-100">
+        <div class="w-10 h-10 mx-auto rounded-full border-4 border-sky-100 border-t-sky-500 animate-spin"></div>
+        <p class="font-extrabold text-slate-700 text-sm">ベストな配置を計算中...</p>
+      </div>
+
+      <!-- 提案結果＆マーキング -->
+      <div id="placeResultCard" class="hidden bg-white rounded-3xl p-4 shadow-sm border border-sky-100 space-y-3.5">
+        <div class="relative w-full rounded-2xl overflow-hidden bg-slate-900 border border-slate-200 flex justify-center">
+          <span id="placeChosenPhotoTag" class="hidden absolute top-2 left-2 z-10 px-2.5 py-0.5 rounded-full bg-sky-600 text-white text-[10px] font-black">
+            写真 1 がベスト！
+          </span>
+          <div class="relative inline-block">
+            <img id="placeAnnotatedImg" src="" alt="配置提案写真" class="block max-h-72 max-w-full w-auto h-auto" />
+            <div id="placeMarker" class="absolute pointer-events-none" style="left: 50%; top: 50%;">
+              <div class="relative">
+                <div class="absolute w-9 h-9 rounded-full bg-sky-400/50 pulse-ring"></div>
+                <div class="w-5 h-5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-sky-500 border-2 border-white shadow-md"></div>
+                <span id="placeLabel" class="absolute left-0 -translate-x-1/2 px-2.5 py-0.5 rounded-full bg-sky-600/95 text-white text-[11px] font-black whitespace-nowrap shadow-md border border-white/80" style="top: 14px;">
+                  ✨ ここがベスト！
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="bg-sky-50/70 rounded-2xl p-3.5 space-y-1">
+          <p id="placeSpotTitle" class="text-base font-black text-slate-800"></p>
+          <p id="placeReasonText" class="text-xs font-bold text-slate-600 leading-relaxed"></p>
+        </div>
+
+        <div class="flex gap-2">
+          <button id="replayPlaceVoiceBtn" type="button" class="px-4 py-3 rounded-2xl bg-slate-100 text-slate-700 font-extrabold text-xs">
+            🔊 もう一度
+          </button>
+          <button id="saveSpotRuleBtn" type="button" class="flex-1 py-3 rounded-2xl bg-sky-500 text-white font-black text-xs shadow-sm active:scale-95 transition">
+            📌 ここを定位置として記憶する
+          </button>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- 下部シンプルナビ -->
+  <nav class="fixed bottom-0 inset-x-0 max-w-md mx-auto bg-white/95 backdrop-blur-md border-t border-slate-100 px-6 py-2.5 flex gap-3 z-30">
+    <button id="tabTidyBtn" type="button" class="flex-1 py-2.5 rounded-2xl bg-emerald-500 text-white font-black text-sm transition flex items-center justify-center gap-1.5 shadow-sm">
+      <span>🧹</span><span>お片付け</span>
+    </button>
+    <button id="tabPlaceBtn" type="button" class="flex-1 py-2.5 rounded-2xl bg-slate-100 text-slate-500 font-black text-sm transition flex items-center justify-center gap-1.5">
+      <span>✨</span><span>置き場所を聞く</span>
+    </button>
+  </nav>
+
+  <!-- 設定モーダル（歯車アイコン） -->
+  <div id="settingsModal" class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-xs z-50 flex items-end sm:items-center justify-center p-4">
+    <div class="bg-white w-full max-w-md rounded-3xl p-6 space-y-4 shadow-2xl max-h-[85vh] overflow-y-auto">
+      <div class="flex items-center justify-between">
+        <h3 class="text-lg font-black text-slate-800">設定 <span class="text-[10px] font-bold text-slate-400">v7</span></h3>
+        <button id="closeSettingsBtn" type="button" class="w-8 h-8 rounded-full bg-slate-100 text-slate-500 font-bold">✕</button>
+      </div>
+
+      <!-- きれいな部屋の登録（複数エリア対応） -->
+      <div class="space-y-2">
+        <div class="flex items-center justify-between">
+          <p class="text-xs font-black text-slate-500">1. きれいな部屋の基準写真（最大4エリア）</p>
+          <span id="baselineCountLabel" class="text-[11px] font-black text-emerald-600">0 / 4 枚</span>
+        </div>
+        <label class="block cursor-pointer">
+          <input id="baselinePhotoInput" type="file" accept="image/*" multiple class="sr-only" />
+          <div class="w-full py-3 px-4 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-700 font-extrabold text-sm text-center hover:bg-emerald-100 transition">
+            📷 きれいな状態の部屋を追加する（複数可）
+          </div>
+        </label>
+        <div id="baselinePreviewWrap" class="hidden space-y-2 pt-1">
+          <div id="baselineThumbGrid" class="grid grid-cols-4 gap-2"></div>
+          <button id="clearBaselineBtn" type="button" class="text-[11px] text-rose-500 font-bold underline">基準写真をすべて削除</button>
+        </div>
+      </div>
+
+      <!-- 記憶した定位置リスト -->
+      <div class="space-y-1.5 border-t border-slate-100 pt-3">
+        <p class="text-xs font-black text-slate-500">2. 記憶した定位置ルール（置き場所相談から追加）</p>
+        <div id="customSpotsList" class="text-xs text-slate-500 font-bold space-y-1">
+          まだ登録されていません
+        </div>
+      </div>
+
+      <!-- Gemini APIキー（公開URLで使うとき） -->
+      <div class="space-y-1.5 border-t border-slate-100 pt-3">
+        <p class="text-xs font-black text-slate-500">3. Gemini APIキー（公開URLで使うとき）</p>
+        <div class="flex gap-2">
+          <input id="apiKeyInput" type="password" autocomplete="off" placeholder="AIza…"
+            class="flex-1 min-w-0 px-3 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-700 focus:outline-none focus:border-emerald-400" />
+          <button id="saveApiKeyBtn" type="button" class="shrink-0 px-3 py-2.5 rounded-xl bg-emerald-500 text-white text-xs font-black">保存</button>
+        </div>
+        <p id="apiKeyStatus" class="text-[11px] font-bold text-slate-400">この端末のブラウザにだけ保存され、Google以外には送信されません。</p>
+      </div>
+
+      <!-- 音声設定 -->
+      <div class="flex items-center justify-between py-2 border-t border-slate-100">
+        <span class="text-sm font-extrabold text-slate-700">音声ガイド読み上げ</span>
+        <input id="voiceToggle" type="checkbox" checked class="w-5 h-5 accent-emerald-500" />
+      </div>
+
+      <!-- 履歴リセット -->
+      <div class="pt-1 border-t border-slate-100">
+        <button id="clearHistoryBtn" type="button" class="w-full py-2.5 rounded-xl bg-slate-100 text-slate-500 text-xs font-bold hover:bg-slate-200 transition">
+          散らかり履歴・定位置をリセット
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 達成カード画像生成用キャンバス（非表示） -->
+  <canvas id="shareCardCanvas" width="1080" height="720" class="hidden"></canvas>
+
+  <script>
+    const apiKey = "";
+    const API_KEY_STORAGE = "okatazuke_gemini_key";
+    function getUserApiKey() {
+      try { return (localStorage.getItem(API_KEY_STORAGE) || "").trim(); } catch (_) { return ""; }
+    }
+    const MODEL_NAME = "gemini-2.5-flash";
+    const MAX_MEDIA_ITEMS = 6;
+    const MAX_BASELINE_ITEMS = 4;
+
+    // 状態管理（複数写真・動画フレーム・複数基準写真対応）
+    let baselineImages = [];
+    try {
+      const savedBase = localStorage.getItem("okatazuke_baselines_v2");
+      if (savedBase) baselineImages = JSON.parse(savedBase);
+      else if (localStorage.getItem("okatazuke_baseline")) {
+        baselineImages = [localStorage.getItem("okatazuke_baseline")];
+      }
+    } catch (_) { baselineImages = []; }
+
+    // 現在の解析対象キュー [{ dataUrl, label, sourceType: 'photo'|'video' }]
+    let mediaQueue = [];
+    let activeMediaList = []; // 解析実行時に確定した画像リスト
+    let beforeScoreSession = 0;
+    let afterRoomBase64 = null;
+    let afterScoreSession = 0;
+    function readStoredArray(key) {
+      try { const v = JSON.parse(localStorage.getItem(key) || "[]"); return Array.isArray(v) ? v : []; }
+      catch (_) { return []; }
+    }
+    function writeStored(key, value) {
+      try { localStorage.setItem(key, JSON.stringify(value)); } catch (_) {}
+    }
+    let clutterHistory = readStoredArray("okatazuke_history");
+    let customSpots = readStoredArray("okatazuke_spots");
+    let allDetectedSteps = []; // 3分モードでも散らかり度は部屋全体で計算する
+    let currentSteps = [];
+    let currentStepIndex = 0;
+    let showingBaselinePhoto = false;
+    let lastPlaceSpeech = "";
+    let lastPlaceProposal = null;
+
+    // IndexedDB を使った大容量・高耐久セッション永続化（マイク許可時のiframe再生成でも確実に復元）
+    function openSessionDB() {
+      return new Promise((resolve, reject) => {
+        const req = indexedDB.open("okatazuke_session_db", 1);
+        req.onupgradeneeded = () => {
+          const db = req.result;
+          if (!db.objectStoreNames.contains("state")) {
+            db.createObjectStore("state");
+          }
+        };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+    }
+
+    async function saveActiveSession() {
+      try {
+        const db = await openSessionDB();
+        const tx = db.transaction("state", "readwrite");
+        const store = tx.objectStore("state");
+        const isStepVisible = !document.getElementById("stepCard").classList.contains("hidden");
+        if (isStepVisible && currentSteps.length > 0 && activeMediaList.length > 0) {
+          store.put({
+            activeMediaList,
+            currentSteps,
+            currentStepIndex,
+            beforeScoreSession,
+            allDetectedSteps,
+            isQuickMode: document.getElementById("quickModeToggle").checked,
+            wantMicOn: isHandsFreeOn,
+            savedAt: Date.now()
+          }, "current");
+        } else {
+          store.delete("current");
+        }
+      } catch (_) {}
+    }
+
+    async function clearActiveSession() {
+      try {
+        const db = await openSessionDB();
+        const tx = db.transaction("state", "readwrite");
+        tx.objectStore("state").delete("current");
+      } catch (_) {}
+    }
+
+    async function restoreActiveSessionIfAny() {
+      try {
+        const db = await openSessionDB();
+        const data = await new Promise((resolve) => {
+          const tx = db.transaction("state", "readonly");
+          const req = tx.objectStore("state").get("current");
+          req.onsuccess = () => resolve(req.result);
+          req.onerror = () => resolve(null);
+        });
+
+        if (!data || !Array.isArray(data.currentSteps) || data.currentSteps.length === 0 || !Array.isArray(data.activeMediaList) || data.activeMediaList.length === 0) {
+          return false;
+        }
+        // 3時間以上前の古いセッションは無視
+        if (data.savedAt && Date.now() - data.savedAt > 3 * 60 * 60 * 1000) {
+          await clearActiveSession();
+          return false;
+        }
+
+        activeMediaList = data.activeMediaList;
+        currentSteps = data.currentSteps;
+        currentStepIndex = Math.min(data.currentSteps.length - 1, Math.max(0, data.currentStepIndex || 0));
+        beforeScoreSession = data.beforeScoreSession || 0;
+        allDetectedSteps = Array.isArray(data.allDetectedSteps) ? data.allDetectedSteps : currentSteps;
+        document.getElementById("quickModeToggle").checked = Boolean(data.isQuickMode);
+
+        document.getElementById("captureBox").classList.add("hidden");
+        document.getElementById("quickBadge").classList.toggle("hidden", !data.isQuickMode);
+        document.getElementById("unifiedRoomBadge").classList.toggle("hidden", activeMediaList.length <= 1);
+        renderCurrentStep(true); // リロード復帰時は音声重複読み上げを抑制
+
+        if (data.wantMicOn && recognition) {
+          isHandsFreeOn = true;
+          updateMicButtonUI(true);
+          micCooldownUntil = Date.now() + 700;
+          try { recognition.start(); } catch (_) {}
+        }
+        return true;
+      } catch (_) {
+        return false;
+      }
+    }
+
+    // ハンズフリー音声認識（iframeサンドボックス制限を事前判定）
+    const SRClass = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const micPolicyAllowed = document.featurePolicy?.allowsFeature?.("microphone") !== false;
+    const canUseVoiceRecognition = Boolean(SRClass && micPolicyAllowed && self.origin !== "null");
+
+    let recognition = null;
+    let isHandsFreeOn = false;
+    let isSpeakingNow = false;
+    let micCooldownUntil = 0;
+
+    const clutterPercentEl = document.getElementById("clutterPercent");
+    const clutterRingEl = document.getElementById("clutterRing");
+    const clutterEmojiEl = document.getElementById("clutterEmoji");
+    const paceSubtextEl = document.getElementById("paceSubtext");
+    const timingBannerEl = document.getElementById("timingBanner");
+    const timingTextEl = document.getElementById("timingText");
+    const baselineBadgeEl = document.getElementById("baselineBadge");
+
+    function showMessage(text) {
+      const box = document.getElementById("messageToast");
+      document.getElementById("messageToastText").textContent = text;
+      box.classList.remove("hidden");
+      clearTimeout(window._msgTimer);
+      window._msgTimer = setTimeout(() => box.classList.add("hidden"), 4500);
+    }
+
+    document.getElementById("closeMessageToastBtn").addEventListener("click", (e) => {
+      e.preventDefault();
+      document.getElementById("messageToast").classList.add("hidden");
+    });
+
+    async function init() {
+      // サンドボックスiframe（origin === "null"）などマイク権限でリロードが起きる環境ではマイクボタンを自動で隠す
+      if (canUseVoiceRecognition) {
+        document.getElementById("preMicRow").classList.remove("hidden");
+      } else {
+        document.getElementById("handsFreeControls").classList.add("hidden");
+        document.getElementById("previewNoMicNote").classList.remove("hidden");
+      }
+
+      updateBaselineUI();
+      renderMediaQueueUI();
+      renderCustomSpotsUI();
+      updatePaceAndTimingUI();
+      setupSpeechRecognition();
+      if (clutterHistory.length > 0) {
+        const latest = clutterHistory[clutterHistory.length - 1];
+        renderClutterGauge(latest.score);
+      }
+      await restoreActiveSessionIfAny();
+    }
+
+    // 音声読み上げ（読み上げ中は音声認識を一時停止して誤反応を防ぐ）
+    function speak(text) {
+      if (!document.getElementById("voiceToggle").checked) return;
+      if (!("speechSynthesis" in window)) return;
+      window.speechSynthesis.cancel();
+      isSpeakingNow = true;
+      const uttr = new SpeechSynthesisUtterance(text);
+      uttr.lang = "ja-JP";
+      uttr.rate = 1.05;
+      uttr.onend = () => {
+        isSpeakingNow = false;
+        micCooldownUntil = Date.now() + 500;
+      };
+      uttr.onerror = () => { isSpeakingNow = false; };
+      window.speechSynthesis.speak(uttr);
+    }
+
+    // ハンズフリー連続音声認識（「できた」「次へ」「OK」で自動遷移・画面リセット防止ガード付き）
+    function setupSpeechRecognition() {
+      if (!canUseVoiceRecognition) return;
+      recognition = new SRClass();
+      recognition.lang = "ja-JP";
+      recognition.continuous = true;
+      recognition.interimResults = false;
+
+      recognition.onstart = () => {
+        if (isHandsFreeOn) {
+          document.getElementById("voiceHeardHint").textContent = "マイク待機中…「できた」で次へ";
+        }
+      };
+
+      recognition.onresult = (event) => {
+        if (!isHandsFreeOn || isSpeakingNow || Date.now() < micCooldownUntil) return;
+        if (document.getElementById("stepCard").classList.contains("hidden")) return;
+
+        const lastIdx = event.results.length - 1;
+        const transcript = event.results[lastIdx][0].transcript.trim();
+        if (!transcript) return;
+
+        document.getElementById("voiceHeardHint").textContent = `聞き取り: 「${transcript}」`;
+
+        if (/(できた|おわった|終わった|つぎ|次|オッケー|OK|おっけー|完了|おわり)/i.test(transcript)) {
+          micCooldownUntil = Date.now() + 1500;
+          setTimeout(() => {
+            if (!document.getElementById("stepCard").classList.contains("hidden")) {
+              advanceToNextStep();
+            }
+          }, 200);
+        }
+      };
+
+      recognition.onerror = (event) => {
+        console.warn("SpeechRecognition error:", event.error);
+        if (event.error === "not-allowed" || event.error === "service-not-allowed") {
+          isHandsFreeOn = false;
+          updateMicButtonUI(false);
+          document.getElementById("preMicToggle").checked = false;
+          document.getElementById("voiceHeardHint").textContent = "マイク権限がオフです";
+          showMessage("マイクの使用が許可されていません。ブラウザ設定をご確認ください。");
+        }
+      };
+
+      recognition.onend = () => {
+        if (isHandsFreeOn && !document.getElementById("stepCard").classList.contains("hidden")) {
+          setTimeout(() => {
+            if (isHandsFreeOn && !document.getElementById("stepCard").classList.contains("hidden")) {
+              try { recognition.start(); } catch (_) {}
+            }
+          }, 200);
+        }
+      };
+    }
+
+    function updateMicButtonUI(active) {
+      const btn = document.getElementById("toggleHandsFreeBtn");
+      const textEl = document.getElementById("micBtnText");
+      const preToggle = document.getElementById("preMicToggle");
+      if (preToggle) preToggle.checked = active;
+
+      if (active) {
+        btn.className = "shrink-0 whitespace-nowrap px-3 py-1.5 rounded-xl bg-rose-500 text-white text-xs font-black flex items-center gap-1.5 mic-active transition";
+        textEl.textContent = "声で次へ ON";
+      } else {
+        btn.className = "shrink-0 whitespace-nowrap px-3 py-1.5 rounded-xl bg-white border border-slate-200 text-slate-700 text-xs font-black flex items-center gap-1.5 shadow-2xs transition";
+        textEl.textContent = "声で次へ OFF";
+        document.getElementById("voiceHeardHint").textContent = "「できた」で次へ";
+      }
+    }
+
+    function setHandsFreeState(nextState, startListeningNow = true) {
+      if (!canUseVoiceRecognition || !recognition) return;
+      isHandsFreeOn = nextState;
+      updateMicButtonUI(isHandsFreeOn);
+      saveActiveSession();
+
+      if (isHandsFreeOn && startListeningNow) {
+        micCooldownUntil = Date.now() + 700;
+        document.getElementById("voiceHeardHint").textContent = "マイク起動中…";
+        try {
+          recognition.start();
+        } catch (err) {
+          console.warn("recognition start:", err);
+        }
+      } else if (!isHandsFreeOn) {
+        try { recognition.stop(); } catch (_) {}
+      }
+    }
+
+    // トップ画面での事前マイク許可トグル
+    document.getElementById("preMicToggle").addEventListener("change", (e) => {
+      const checked = e.target.checked;
+      if (checked) {
+        // トップ画面で一度認識を開始して権限ダイアログを済ませる
+        isHandsFreeOn = true;
+        updateMicButtonUI(true);
+        try {
+          recognition.start();
+          setTimeout(() => {
+            if (document.getElementById("stepCard").classList.contains("hidden")) {
+              try { recognition.stop(); } catch (_) {}
+            }
+          }, 1200);
+        } catch (_) {}
+      } else {
+        setHandsFreeState(false, false);
+      }
+    });
+
+    document.getElementById("toggleHandsFreeBtn").addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setHandsFreeState(!isHandsFreeOn, true);
+    });
+
+    // ---- 画像読み込み（HEIC/HEIF 対応） ----
+    const HEIC2ANY_URL = "https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js";
+    let heic2anyPromise = null;
+    // 変換ライブラリの読み込み。
+    // プレビュー環境に define / module / exports（let・const 宣言を含む）があっても影響を受けないよう、
+    // ライブラリのコードを取得し、それらを引数で上書きした関数の中で実行して結果を受け取る。
+    async function evalHeic2anyIsolated() {
+      const res = await fetch(HEIC2ANY_URL, { mode: "cors" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const code = await res.text();
+      const fakeModule = { exports: {} };
+      const holder = {};
+      const run = new Function("define", "module", "exports", code);
+      run.call(holder, undefined, fakeModule, fakeModule.exports);
+      const ex = fakeModule.exports;
+      const lib = (ex && (ex.default || ex)) || holder.heic2any;
+      if (typeof lib !== "function") throw new Error("export not found");
+      return lib;
+    }
+
+    function loadViaScriptTag() {
+      return new Promise((resolve, reject) => {
+        const sc = document.createElement("script");
+        sc.src = HEIC2ANY_URL;
+        sc.onload = () => typeof window.heic2any === "function"
+          ? resolve(window.heic2any)
+          : reject(new Error("export not found"));
+        sc.onerror = () => reject(new Error("network"));
+        document.head.appendChild(sc);
+      });
+    }
+
+    function loadHeic2any() {
+      if (typeof window.heic2any === "function") return Promise.resolve(window.heic2any);
+      if (!heic2anyPromise) {
+        heic2anyPromise = (async () => {
+          const reasons = [];
+          try { return await evalHeic2anyIsolated(); } catch (e) { reasons.push("A:" + (e && e.message)); }
+          try { return await loadViaScriptTag(); } catch (e) { reasons.push("B:" + (e && e.message)); }
+          heic2anyPromise = null;
+          const offline = reasons.every((r) => /network|Failed to fetch|HTTP/i.test(r));
+          throw new Error(offline
+            ? "HEIC変換ライブラリを読み込めませんでした（通信を確認してください）"
+            : `HEIC変換ライブラリを読み込めませんでした（${reasons.join(" / ")}）`);
+        })();
+      }
+      return heic2anyPromise;
+    }
+
+    async function isHeicFile(file) {
+      const t = (file.type || "").toLowerCase();
+      if (t.includes("heic") || t.includes("heif")) return true;
+      if (/\.(heic|heif)$/i.test(file.name || "")) return true;
+      try {
+        // 拡張子や種類が付いていない場合は中身の先頭（ftyp ボックス）で判定
+        const head = new Uint8Array(await file.slice(0, 16).arrayBuffer());
+        const ftyp = String.fromCharCode(...head.slice(4, 8));
+        const brand = String.fromCharCode(...head.slice(8, 12));
+        return ftyp === "ftyp" && /^(heic|heix|hevc|hevx|heim|heis|hevm|hevs|mif1|msf1)$/.test(brand);
+      } catch (_) { return false; }
+    }
+
+    // Blob を <img> で読み、長辺 maxDim に縮小して JPEG の dataURL にする
+    function blobToResizedDataUrl(blob, maxDim) {
+      return new Promise((resolve, reject) => {
+        const url = URL.createObjectURL(blob);
+        const img = new Image();
+        img.onload = () => {
+          URL.revokeObjectURL(url);
+          const scale = Math.min(1, maxDim / Math.max(img.naturalWidth, img.naturalHeight));
+          const canvas = document.createElement("canvas");
+          canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
+          canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+          canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+          resolve(canvas.toDataURL("image/jpeg", 0.82));
+        };
+        img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("decode failed")); };
+        img.src = url;
+      });
+    }
+
+    async function fileToResizedBase64(file, maxDim = 960) {
+      // 1) まずブラウザ標準で読む（Safari は HEIC もここで読める）
+      try {
+        return await blobToResizedDataUrl(file, maxDim);
+      } catch (_) {}
+
+      // 2) HEIC/HEIF なら JPEG に変換してから読む（Chrome / Edge / Android など）
+      if (await isHeicFile(file)) {
+        showMessage("iPhoneの写真（HEIC）を変換しています…");
+        try {
+          const heic2any = await loadHeic2any();
+          let out = await heic2any({ blob: file, toType: "image/jpeg", quality: 0.9 });
+          if (Array.isArray(out)) out = out[0]; // 連写など複数枚入りは1枚目を使う
+          const dataUrl = await blobToResizedDataUrl(out, maxDim);
+          document.getElementById("messageToast").classList.add("hidden");
+          return dataUrl;
+        } catch (err) {
+          console.warn("HEIC convert failed:", err);
+          throw new Error(`「${file.name || "写真"}」（HEIC）を変換できませんでした。${err && err.message && err.message.includes("ライブラリ") ? err.message : `写真をJPEGで保存し直してお試しください。（詳細: ${String((err && (err.message || err.code)) || err).slice(0, 80)}）`}`);
+        }
+      }
+
+      // 3) その他の形式は createImageBitmap で再挑戦
+      try {
+        const bmp = await createImageBitmap(file);
+        const scale = Math.min(1, maxDim / Math.max(bmp.width, bmp.height));
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.round(bmp.width * scale);
+        canvas.height = Math.round(bmp.height * scale);
+        canvas.getContext("2d").drawImage(bmp, 0, 0, canvas.width, canvas.height);
+        return canvas.toDataURL("image/jpeg", 0.82);
+      } catch (_) {
+        throw new Error(`「${file.name || "写真"}」はこのブラウザで読み込めない形式です。JPEGかPNGでお試しください。`);
+      }
+    }
+
+    // 動画から最大5フレーム（開始・25%・50%・75%・終了付近）を自動抽出
+    function extractFramesFromVideo(videoFile, maxFrames = 5) {
+      return new Promise((resolve, reject) => {
+        const url = URL.createObjectURL(videoFile);
+        const video = document.createElement("video");
+        video.preload = "metadata";
+        video.muted = true;
+        video.playsInline = true;
+        video.src = url;
+
+        video.onloadedmetadata = async () => {
+          const duration = video.duration;
+          if (!duration || !isFinite(duration) || duration <= 0) {
+            URL.revokeObjectURL(url);
+            reject(new Error("動画の長さを取得できませんでした"));
+            return;
+          }
+
+          const count = Math.min(maxFrames, Math.max(2, Math.ceil(duration / 1.5)));
+          const timestamps = [];
+          for (let i = 0; i < count; i++) {
+            const ratio = count === 1 ? 0.2 : (0.05 + (0.9 * i) / (count - 1));
+            timestamps.push(Math.min(duration - 0.1, Math.max(0.05, duration * ratio)));
+          }
+
+          const canvas = document.createElement("canvas");
+          const maxDim = 900;
+          let w = video.videoWidth || 720;
+          let h = video.videoHeight || 1280;
+          if (w > maxDim || h > maxDim) {
+            if (w > h) { h = Math.round((h * maxDim) / w); w = maxDim; }
+            else { w = Math.round((w * maxDim) / h); h = maxDim; }
+          }
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext("2d");
+
+          const frames = [];
+          const seekTo = (time) => new Promise((res) => {
+            const onSeeked = () => {
+              video.removeEventListener("seeked", onSeeked);
+              ctx.drawImage(video, 0, 0, w, h);
+              frames.push({
+                dataUrl: canvas.toDataURL("image/jpeg", 0.8),
+                timeSec: time.toFixed(1)
+              });
+              res();
+            };
+            video.addEventListener("seeked", onSeeked);
+            video.currentTime = time;
+          });
+
+          try {
+            for (const t of timestamps) {
+              await seekTo(t);
+            }
+            URL.revokeObjectURL(url);
+            resolve(frames);
+          } catch (err) {
+            URL.revokeObjectURL(url);
+            reject(err);
+          }
+        };
+
+        video.onerror = () => {
+          URL.revokeObjectURL(url);
+          reject(new Error("動画の読み込みに失敗しました"));
+        };
+      });
+    }
+
+    // サムネイルキュー描画
+    function renderMediaQueueUI() {
+      const countBadge = document.getElementById("mediaCountBadge");
+      const queueWrap = document.getElementById("mediaQueueWrap");
+      const thumbGrid = document.getElementById("mediaThumbGrid");
+      const directSnapWrap = document.getElementById("directSnapWrap");
+      const startMultiBtn = document.getElementById("startMultiAnalyzeBtn");
+      const startMultiLabel = document.getElementById("startMultiAnalyzeLabel");
+
+      countBadge.textContent = `${mediaQueue.length} / ${MAX_MEDIA_ITEMS} 枚`;
+
+      if (mediaQueue.length === 0) {
+        queueWrap.classList.add("hidden");
+        directSnapWrap.classList.remove("hidden");
+        startMultiBtn.classList.add("hidden");
+        return;
+      }
+
+      queueWrap.classList.remove("hidden");
+      directSnapWrap.classList.add("hidden");
+      startMultiBtn.classList.remove("hidden");
+      startMultiLabel.textContent = `${mediaQueue.length}枚のシーンをまとめて解析開始`;
+
+      thumbGrid.innerHTML = "";
+      mediaQueue.forEach((item, idx) => {
+        const card = document.createElement("div");
+        card.className = "relative aspect-square rounded-xl overflow-hidden bg-slate-900 border border-slate-200 group";
+        card.innerHTML = `
+          <img src="${item.dataUrl}" class="w-full h-full object-cover" alt="シーン${idx + 1}" />
+          <span class="absolute top-1 left-1 px-1.5 py-0.5 rounded-md bg-black/70 text-white text-[10px] font-black">
+            ${item.sourceType === "video" ? `🎥${idx + 1}` : `写真${idx + 1}`}
+          </span>
+          <button type="button" data-idx="${idx}" class="remove-media-btn absolute top-1 right-1 w-5 h-5 rounded-full bg-rose-500 text-white text-[10px] font-black flex items-center justify-center shadow-xs">
+            ✕
+          </button>
+        `;
+        thumbGrid.appendChild(card);
+      });
+
+      document.querySelectorAll(".remove-media-btn").forEach((btn) => {
+        btn.addEventListener("click", (e) => {
+          const i = Number(e.currentTarget.getAttribute("data-idx"));
+          mediaQueue.splice(i, 1);
+          renderMediaQueueUI();
+        });
+      });
+    }
+
+    // 複数写真の追加
+    document.getElementById("multiPhotoInput").addEventListener("change", async (e) => {
+      const files = Array.from(e.target.files || []);
+      if (files.length === 0) return;
+
+      const countBadge = document.getElementById("mediaCountBadge");
+      countBadge.textContent = "読み込み中…";
+      let lastError = null;
+      let added = 0;
+      try {
+        for (const file of files) {
+          if (mediaQueue.length >= MAX_MEDIA_ITEMS) {
+            lastError = new Error(`一度に解析できるのは最大${MAX_MEDIA_ITEMS}枚までです`);
+            break;
+          }
+          try {
+            const dataUrl = await fileToResizedBase64(file, 900);
+            mediaQueue.push({ dataUrl, sourceType: "photo" });
+            added++;
+          } catch (err) {
+            console.warn(err);
+            lastError = err;
+          }
+        }
+      } finally {
+        e.target.value = ""; // 失敗しても同じ写真を選び直せるようにする
+        renderMediaQueueUI();
+      }
+      if (lastError) showMessage(added > 0 ? `${added}枚追加しました。${lastError.message}` : lastError.message);
+      else document.getElementById("messageToast").classList.add("hidden");
+    });
+
+    // 動画のアップロード・撮影 → 自動フレーム抽出
+    document.getElementById("roomVideoInput").addEventListener("change", async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+
+      document.getElementById("captureBox").classList.add("hidden");
+      document.getElementById("videoExtractBox").classList.remove("hidden");
+
+      try {
+        const remainSlots = Math.max(2, MAX_MEDIA_ITEMS - mediaQueue.length);
+        const frames = await extractFramesFromVideo(file, Math.min(5, remainSlots));
+        for (const f of frames) {
+          if (mediaQueue.length >= MAX_MEDIA_ITEMS) break;
+          mediaQueue.push({ dataUrl: f.dataUrl, sourceType: "video" });
+        }
+        renderMediaQueueUI();
+        showMessage(`動画から${frames.length}シーンを抽出しました！`);
+      } catch (err) {
+        console.error(err);
+        showMessage("動画の読み込みに失敗しました。別の動画または写真でお試しください。");
+      } finally {
+        document.getElementById("videoExtractBox").classList.add("hidden");
+        document.getElementById("captureBox").classList.remove("hidden");
+        e.target.value = "";
+      }
+    });
+
+    document.getElementById("clearMediaQueueBtn").addEventListener("click", () => {
+      mediaQueue = [];
+      renderMediaQueueUI();
+    });
+
+    // 今すぐ1枚カメラ撮影 → 即解析
+    document.getElementById("singleCameraInput").addEventListener("change", async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      let dataUrl;
+      try {
+        dataUrl = await fileToResizedBase64(file, 960);
+      } catch (err) {
+        showMessage(err.message);
+        return;
+      } finally {
+        e.target.value = "";
+      }
+      mediaQueue = [{ dataUrl, sourceType: "photo" }];
+      renderMediaQueueUI();
+      await runMultiSceneAnalysis();
+    });
+
+    // 複数シーンまとめて解析開始ボタン
+    document.getElementById("startMultiAnalyzeBtn").addEventListener("click", async () => {
+      if (mediaQueue.length === 0) return;
+      await runMultiSceneAnalysis();
+    });
+
+    // Gemini API 呼び出し（ラベル付きマルチモーダルパーツ対応）
+    async function callGeminiWithLabeledParts(contentParts) {
+      const userKey = getUserApiKey();
+      // 設定で入れたキーがあればヘッダーで送る（URLに残さない）。なければ従来どおり（プレビュー環境がキーを補う）
+      const url = userKey
+        ? `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent`
+        : `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent?key=${apiKey}`;
+      const headers = { "Content-Type": "application/json" };
+      if (userKey) headers["x-goog-api-key"] = userKey;
+      const res = await fetch(url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          contents: [{ role: "user", parts: contentParts }],
+          generationConfig: {
+            responseMimeType: "application/json",
+            temperature: 0.15
+          }
+        })
+      });
+
+      if (!res.ok) {
+        if (res.status === 400 || res.status === 403) {
+          throw new Error(getUserApiKey()
+            ? "APIキーが無効です。⚙️設定のGemini APIキーを確認してください。"
+            : "APIキーが未設定です。⚙️設定の「Gemini APIキー」に入れて保存してください。");
+        }
+        throw new Error(`API通信エラー (${res.status})`);
+      }
+      const data = await res.json();
+      const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
+      return JSON.parse(rawText);
+    }
+
+    // 決定論的スコア算出
+    function calculateDeterministicClutterScore(items, photoCount) {
+      if (!items || items.length === 0) return 0;
+      let points = 0;
+      for (const it of items) {
+        points += 11;
+        if (it.isOnFloor) points += 6;
+        if (it.isBlocking) points += 5;
+      }
+      const densityFactor = photoCount > 1 ? 0.85 : 1.0;
+      return Math.min(98, Math.max(8, Math.round(points * densityFactor)));
+    }
+
+    // クロス空間＆最短経路アルゴリズム（同じ部屋の複数アングルから重複を除外し、写真間移動も最適化）
+    function optimizeCrossSpaceSteps(rawItems, isQuickMode, totalPhotos) {
+      // 念のためクライアント側でも同一アイテム名・近接座標の重複を除外
+      const deduplicated = [];
+      const centerOf = (it) => {
+        const b = Array.isArray(it.fromBox) && it.fromBox.length === 4 ? it.fromBox : [500, 500, 500, 500];
+        return [(b[1] + b[3]) / 2, (b[0] + b[2]) / 2];
+      };
+      for (const it of rawItems) {
+        const cleanName = (it.itemName || "").replace(/\s+/g, "").toLowerCase();
+        const [cx, cy] = centerOf(it);
+        const isDup = deduplicated.some((d) => {
+          const dn = (d.itemName || "").replace(/\s+/g, "").toLowerCase();
+          if (!cleanName || dn !== cleanName) return false;
+          if ((Number(d.fromPhotoIndex) || 1) !== (Number(it.fromPhotoIndex) || 1)) return true; // 別写真の同名＝同じ物の写り込み
+          const [dx, dy] = centerOf(d);
+          return Math.hypot(cx - dx, cy - dy) < 80; // 同じ写真内でも離れていれば別の物
+        });
+        if (!isDup) deduplicated.push(it);
+      }
+
+      const normalized = deduplicated.map((it) => {
+        const box = Array.isArray(it.fromBox) && it.fromBox.length === 4 ? it.fromBox : [400, 400, 600, 600];
+        const fromY = Math.round(((box[0] + box[2]) / 2) / 10);
+        const fromX = Math.round(((box[1] + box[3]) / 2) / 10);
+        const toX = Math.round((Number(it.toX1000) || 500) / 10);
+        const toY = Math.round((Number(it.toY1000) || 500) / 10);
+        const fromPhotoIdx = Math.max(0, Math.min(totalPhotos - 1, (Number(it.fromPhotoIndex) || 1) - 1));
+        const toPhotoIdx = Math.max(0, Math.min(totalPhotos - 1, (Number(it.toPhotoIndex) || (fromPhotoIdx + 1)) - 1));
+        const baseIdx = baselineImages.length > 0
+          ? Math.max(0, Math.min(baselineImages.length - 1, (Number(it.baselinePhotoIndex) || 1) - 1))
+          : 0;
+        const baseX = it.baselineX1000 != null ? Math.round(Number(it.baselineX1000) / 10) : toX;
+        const baseY = it.baselineY1000 != null ? Math.round(Number(it.baselineY1000) / 10) : toY;
+
+        const zone = fromPhotoIdx * 4 + (fromY < 50 ? 0 : 2) + (fromX < 50 ? 0 : 1);
+        const impact = 11 + (it.isOnFloor ? 6 : 0) + (it.isBlocking ? 5 : 0);
+
+        return {
+          ...it,
+          fromPhotoIdx,
+          toPhotoIdx,
+          baselinePhotoIdx: baseIdx,
+          fromX,
+          fromY,
+          toX,
+          toY,
+          baselineX: baseX,
+          baselineY: baseY,
+          zone,
+          impact
+        };
+      });
+
+      let candidates = normalized;
+
+      // 3分だけクイックモード：最も散らかり度インパクトが高い1エリア（最大3ステップ）を抽出
+      if (isQuickMode && normalized.length > 0) {
+        const zoneScores = {};
+        normalized.forEach((it) => {
+          zoneScores[it.zone] = (zoneScores[it.zone] || 0) + it.impact;
+        });
+        const bestZone = Number(Object.keys(zoneScores).reduce((a, b) => zoneScores[a] > zoneScores[b] ? a : b));
+        const zoneItems = normalized.filter((it) => it.zone === bestZone);
+        candidates = [...(zoneItems.length > 0 ? zoneItems : normalized)]
+          .sort((a, b) => b.impact - a.impact)
+          .slice(0, 3);
+      }
+
+      // 貪欲法による最短動線ソート（同じ写真の近くにある物をまとめて処理し、写真間の往復を最小化）
+      const remaining = [...candidates];
+      const ordered = [];
+      let curPhoto = 0;
+      let curX = 50;
+      let curY = 85;
+
+      while (remaining.length > 0) {
+        let bestIdx = 0;
+        let bestCost = Infinity;
+        for (let i = 0; i < remaining.length; i++) {
+          const item = remaining[i];
+          const photoSwitchPenalty = item.fromPhotoIdx === curPhoto ? 0 : 75;
+          const moveDist = Math.hypot(item.fromX - curX, item.fromY - curY);
+          const blockBonus = item.isBlocking ? -28 : 0;
+          const cost = photoSwitchPenalty + moveDist + blockBonus;
+          if (cost < bestCost) {
+            bestCost = cost;
+            bestIdx = i;
+          }
+        }
+        const chosen = remaining.splice(bestIdx, 1)[0];
+        ordered.push(chosen);
+        curPhoto = chosen.toPhotoIdx;
+        curX = chosen.toX;
+        curY = chosen.toY;
+      }
+
+      return ordered;
+    }
+
+    // 複数写真・動画フレームの一括クロス空間解析
+    async function runMultiSceneAnalysis() {
+      const isQuickMode = document.getElementById("quickModeToggle").checked;
+      activeMediaList = [...mediaQueue];
+
+      document.getElementById("captureBox").classList.add("hidden");
+      document.getElementById("stepCard").classList.add("hidden");
+      document.getElementById("completeCard").classList.add("hidden");
+      document.getElementById("loadingBox").classList.remove("hidden");
+
+      try {
+        const hasBaseline = baselineImages.length > 0;
+        const customRulesText = customSpots.length > 0
+          ? `\n【ユーザーが記憶させた定位置ルール】\n${customSpots.map(s => `・${s.item} は「${s.spot}」へしまう`).join("\n")}`
+          : "";
+
+        const contentParts = [];
+        let introText = `あなたは同じ1つの部屋を別角度から撮影した複数の写真・動画シーンを空間的に統合し、全体構造を理解する精密お片付けAIです。\n`;
+        if (hasBaseline) {
+          introText += `まず「きれいな基準写真」（基準1〜基準${baselineImages.length}）を提示し、続いて同じ現在の部屋を別アングルから撮った「現在の部屋の写真」（写真1〜写真${activeMediaList.length}）を提示します。\n`;
+        } else {
+          introText += `これから同じ1つの部屋を別アングルから撮った「現在の部屋の写真」（写真1〜写真${activeMediaList.length}）を提示します。\n`;
+        }
+
+        introText += `
+【最重要タスク：同一空間の統合理解と重複除外】
+1. 写真1〜写真${activeMediaList.length}は**すべて同じ1つの部屋の別アングル（または連続動画フレーム）**です。まず共通して写っている家具（棚の端、机、カーテン、収納ボックス、床の模様など）を手がかりに、1つのつながった部屋の立体構造を頭の中で統合してください。
+2. **重複の厳密な除外**：同じ散らかり物が複数の写真に重なって写っている場合は、**絶対に2回カウント・指示せず、最も見やすく正面に近い1枚（fromPhotoIndex）だけを選んで1回だけリストアップ**してください。
+3. **別の写真への最適収納ルーティング**：1枚の写真の中だけでなく、「写真1（机）にある本を、写真2（本棚）の空いている段へしまう」のように、同じ部屋内の別の写真に写っている最適な収納先（toPhotoIndex）へつなぐ提案を積極的に行ってください。
+4. 写真に実際に写っている物だけを正確に挙げてください。${customRulesText}
+
+【出力座標ルール（0〜1000正規化座標）】
+・sharedLandmarks: 複数写真をつなぐ手がかりになった共通の家具・目印の短いリスト（1枚のみなら空配列）
+・fromPhotoIndex: 対象アイテムが最も見やすく写っている「現在の部屋の写真」の番号（1〜${activeMediaList.length}）
+・fromBox: [ymin, xmin, ymax, xmax] 対象アイテムを囲む正確なバウンディングボックス(0〜1000)
+・toPhotoIndex: しまうべき収納先が写っている「現在の部屋の写真」の番号（1〜${activeMediaList.length}）。同じ写真内なら fromPhotoIndex と同じ番号、別の写真に収納先があるならその写真の番号を指定。
+・toX1000, toY1000: toPhotoIndex の写真内におけるしまうべき定位置の座標(0〜1000)
+・baselinePhotoIndex: ${hasBaseline ? `基準写真の番号(1〜${baselineImages.length})` : "1"}
+・baselineX1000, baselineY1000: ${hasBaseline ? "基準写真内における定位置座標(0〜1000)" : "toX1000, toY1000と同じ値"}
+・itemName: 写っている物の短い名前（例：「テーブルの黒いリュック」）
+・targetName: しまう場所の短い名前（例：「写真2の本棚・下段」）
+・voiceInstruction: 「写真1の〜を、写真2の〜へしまいましょう」のように場所がすぐ分かる優しい音声指示（1文）
+・isOnFloor: 床に直置きされている場合 true
+・isBlocking: 他の物を片付ける邪魔になっている・上に乗っている場合 true
+
+必ず以下のJSON形式のみで返してください:
+{
+  "sharedLandmarks": ["string"],
+  "items": [
+    {
+      "itemName": "string",
+      "targetName": "string",
+      "voiceInstruction": "string",
+      "fromPhotoIndex": number,
+      "fromBox": [number, number, number, number],
+      "toPhotoIndex": number,
+      "toX1000": number,
+      "toY1000": number,
+      "baselinePhotoIndex": number,
+      "baselineX1000": number,
+      "baselineY1000": number,
+      "isOnFloor": boolean,
+      "isBlocking": boolean
+    }
+  ]
+}`;
+
+        contentParts.push({ text: introText });
+
+        if (hasBaseline) {
+          baselineImages.forEach((bUrl, i) => {
+            contentParts.push({ text: `【きれいな基準写真 ${i + 1}】` });
+            contentParts.push({ inlineData: { mimeType: "image/jpeg", data: bUrl.split(",")[1] } });
+          });
+        }
+
+        activeMediaList.forEach((m, i) => {
+          contentParts.push({ text: `【現在の部屋 写真${i + 1}】` });
+          contentParts.push({ inlineData: { mimeType: "image/jpeg", data: m.dataUrl.split(",")[1] } });
+        });
+
+        const result = await callGeminiWithLabeledParts(contentParts);
+        const rawItems = Array.isArray(result.items) ? result.items : [];
+        allDetectedSteps = optimizeCrossSpaceSteps(rawItems, false, activeMediaList.length);
+        currentSteps = isQuickMode
+          ? optimizeCrossSpaceSteps(rawItems, true, activeMediaList.length)
+          : allDetectedSteps;
+        const score = calculateDeterministicClutterScore(allDetectedSteps, activeMediaList.length);
+        beforeScoreSession = score;
+
+        clutterHistory.push({ time: Date.now(), score });
+        if (clutterHistory.length > 20) clutterHistory.shift();
+        writeStored("okatazuke_history", clutterHistory);
+
+        renderClutterGauge(score);
+        updatePaceAndTimingUI();
+
+        document.getElementById("loadingBox").classList.add("hidden");
+
+        if (currentSteps.length === 0 || score === 0) {
+          document.getElementById("completeCard").classList.remove("hidden");
+          document.getElementById("afterCaptureWrap").classList.add("hidden");
+          document.getElementById("beforeAfterWrap").classList.add("hidden");
+          speak("とっても綺麗です！どの写真にも散らかっている物は見つかりませんでした。");
+          return;
+        }
+
+        currentStepIndex = 0;
+        showingBaselinePhoto = false;
+
+        document.getElementById("quickBadge").classList.toggle("hidden", !isQuickMode);
+        document.getElementById("unifiedRoomBadge").classList.toggle("hidden", activeMediaList.length <= 1);
+        renderCurrentStep();
+        saveActiveSession();
+
+        if (isHandsFreeOn && canUseVoiceRecognition && recognition) {
+          micCooldownUntil = Date.now() + 800;
+          try { recognition.start(); } catch (_) {}
+        }
+
+      } catch (err) {
+        console.error(err);
+        document.getElementById("loadingBox").classList.add("hidden");
+        document.getElementById("captureBox").classList.remove("hidden");
+        showMessage(err.message || "解析に失敗しました。もう一度お試しください。");
+      }
+    }
+
+    function renderClutterGauge(score) {
+      const clamped = Math.max(0, Math.min(100, Math.round(score)));
+      clutterPercentEl.textContent = clamped;
+      const circumference = 201;
+      const offset = circumference - (clamped / 100) * circumference;
+      clutterRingEl.style.strokeDashoffset = offset;
+
+      if (clamped <= 20) {
+        clutterRingEl.style.stroke = "#10B981";
+        clutterEmojiEl.textContent = "✨";
+      } else if (clamped <= 55) {
+        clutterRingEl.style.stroke = "#F59E0B";
+        clutterEmojiEl.textContent = "🙂";
+      } else {
+        clutterRingEl.style.stroke = "#F43F5E";
+        clutterEmojiEl.textContent = "💦";
+      }
+    }
+
+    function updatePaceAndTimingUI() {
+      if (clutterHistory.length < 2) {
+        paceSubtextEl.classList.add("hidden");
+        timingBannerEl.classList.add("hidden");
+        return;
+      }
+      const last = clutterHistory[clutterHistory.length - 1];
+
+      // 直近で片付けた（スコアが下がった）時点から、散らかっていく速さだけを見る
+      let startIdx = clutterHistory.length - 1;
+      while (startIdx > 0 && clutterHistory[startIdx - 1].score <= clutterHistory[startIdx].score) startIdx--;
+      const first = clutterHistory[startIdx];
+      const hoursDiff = (last.time - first.time) / (1000 * 60 * 60);
+      const scoreDiff = last.score - first.score;
+      const hasPace = hoursDiff >= 12 && scoreDiff > 0; // 12時間以上たまるまでは予測しない
+      const perDay = hasPace ? Math.round((scoreDiff / hoursDiff) * 24) : 0;
+
+      if (hasPace) {
+        paceSubtextEl.textContent = `散らかるペース：約 +${perDay}% / 日`;
+        paceSubtextEl.classList.remove("hidden");
+      } else {
+        paceSubtextEl.classList.add("hidden");
+      }
+
+      const LIMIT = 60;
+      if (last.score >= LIMIT) {
+        timingBannerEl.classList.remove("hidden");
+        timingTextEl.textContent = `散らかり度 ${last.score}% です。今が片付けのタイミングです。`;
+      } else if (hasPace) {
+        const hoursLeft = Math.max(1, Math.round(((LIMIT - last.score) / perDay) * 24));
+        timingTextEl.textContent = hoursLeft >= 48
+          ? `今のペースだと約 ${Math.round(hoursLeft / 24)} 日後に片付けタイミングが来ます。`
+          : `今のペースだと約 ${hoursLeft} 時間後に片付けタイミングが来ます。`;
+        timingBannerEl.classList.remove("hidden");
+      } else {
+        timingBannerEl.classList.add("hidden");
+      }
+    }
+
+    function updateBaselineUI() {
+      const previewWrap = document.getElementById("baselinePreviewWrap");
+      const thumbGrid = document.getElementById("baselineThumbGrid");
+      const countLabel = document.getElementById("baselineCountLabel");
+      countLabel.textContent = `${baselineImages.length} / ${MAX_BASELINE_ITEMS} 枚`;
+
+      if (baselineImages.length > 0) {
+        baselineBadgeEl.innerHTML = `<span class="text-emerald-600">✅ きれいな部屋：${baselineImages.length}枚登録済み</span>`;
+        previewWrap.classList.remove("hidden");
+        thumbGrid.innerHTML = baselineImages.map((src, i) => `
+          <div class="relative aspect-square rounded-xl overflow-hidden border border-slate-200">
+            <img src="${src}" class="w-full h-full object-cover" alt="基準${i + 1}" />
+            <span class="absolute bottom-0.5 left-0.5 px-1 rounded bg-black/60 text-white text-[9px] font-bold">基準${i + 1}</span>
+          </div>
+        `).join("");
+      } else {
+        baselineBadgeEl.innerHTML = `<span>📷 きれいな部屋：未登録（⚙️から登録可）</span>`;
+        previewWrap.classList.add("hidden");
+      }
+    }
+
+    function renderCustomSpotsUI() {
+      const listEl = document.getElementById("customSpotsList");
+      if (customSpots.length === 0) {
+        listEl.textContent = "まだ登録されていません";
+        return;
+      }
+      listEl.innerHTML = customSpots.map((s) => `<div>・${s.item} → <span class="text-sky-600">${s.spot}</span></div>`).join("");
+    }
+
+    function renderCurrentStep(skipSpeech = false) {
+      const step = currentSteps[currentStepIndex];
+      if (!step) return;
+
+      document.getElementById("stepCard").classList.remove("hidden");
+      document.getElementById("stepCounter").textContent = `ステップ ${currentStepIndex + 1} / ${currentSteps.length}`;
+      document.getElementById("stepTitle").textContent = `${step.itemName} → ${step.targetName}`;
+      document.getElementById("stepDetail").textContent = step.voiceInstruction;
+
+      const isCrossPhoto = step.fromPhotoIdx !== step.toPhotoIdx && activeMediaList.length > 1;
+      document.getElementById("crossPhotoBadge").classList.toggle("hidden", !isCrossPhoto);
+
+      const switchWrap = document.getElementById("photoSwitchWrap");
+      if (baselineImages.length > 0 && !isCrossPhoto) {
+        switchWrap.classList.remove("hidden");
+      } else {
+        switchWrap.classList.add("hidden");
+      }
+
+      updatePhotoMarkers(step);
+      if (!skipSpeech) {
+        speak(step.voiceInstruction);
+      }
+    }
+
+    function updatePhotoMarkers(step) {
+      const sameViewer = document.getElementById("samePhotoViewer");
+      const crossViewer = document.getElementById("crossPhotoViewer");
+      const isCrossPhoto = step.fromPhotoIdx !== step.toPhotoIdx && activeMediaList.length > 1 && !showingBaselinePhoto;
+
+      const clamp = (v, min = 8, max = 92) => Math.max(min, Math.min(max, Number(v) || 50));
+
+      if (isCrossPhoto) {
+        sameViewer.classList.add("hidden");
+        crossViewer.classList.remove("hidden");
+
+        const fromMedia = activeMediaList[step.fromPhotoIdx] || activeMediaList[0];
+        const toMedia = activeMediaList[step.toPhotoIdx] || activeMediaList[0];
+
+        document.getElementById("crossFromPhotoTag").textContent = `写真${step.fromPhotoIdx + 1} ここから`;
+        document.getElementById("crossToPhotoTag").textContent = `写真${step.toPhotoIdx + 1} ここへ`;
+        document.getElementById("crossFromImg").src = fromMedia.dataUrl;
+        document.getElementById("crossToImg").src = toMedia.dataUrl;
+
+        const fx = clamp(step.fromX, 15, 85);
+        const fy = clamp(step.fromY, 15, 80);
+        const tx = clamp(step.toX, 15, 85);
+        const ty = clamp(step.toY, 15, 80);
+
+        const fromPin = document.getElementById("crossFromPin");
+        const toPin = document.getElementById("crossToPin");
+        fromPin.style.left = `${fx}%`;
+        fromPin.style.top = `${fy}%`;
+        toPin.style.left = `${tx}%`;
+        toPin.style.top = `${ty}%`;
+
+        const crossFromLabel = document.getElementById("crossFromLabel");
+        const crossToLabel = document.getElementById("crossToLabel");
+        crossFromLabel.textContent = step.itemName;
+        crossToLabel.textContent = step.targetName;
+        const edgeShift = (x) => x < 35 ? "translateX(-15%)" : x > 65 ? "translateX(-85%)" : "translateX(-50%)";
+        crossFromLabel.style.transform = edgeShift(fx);
+        crossToLabel.style.transform = edgeShift(tx);
+        document.getElementById("crossBridgeText").textContent =
+          `写真${step.fromPhotoIdx + 1} で拾って → 写真${step.toPhotoIdx + 1} へ運びます`;
+        return;
+      }
+
+      sameViewer.classList.remove("hidden");
+      crossViewer.classList.add("hidden");
+
+      const imgEl = document.getElementById("annotatedImg");
+      const photoTag = document.getElementById("samePhotoTag");
+      const fromMarker = document.getElementById("fromMarker");
+      const toMarker = document.getElementById("toMarker");
+      const fromLabel = document.getElementById("fromLabel");
+      const toLabel = document.getElementById("toLabel");
+      const arrowSvg = document.getElementById("arrowOverlay");
+      const lineBase = document.getElementById("moveArrowLine");
+      const lineDash = document.getElementById("moveArrowDash");
+
+      if (showingBaselinePhoto && baselineImages.length > 0) {
+        const bIdx = Math.min(baselineImages.length - 1, step.baselinePhotoIdx || 0);
+        photoTag.textContent = `きれいな基準 ${bIdx + 1}`;
+        imgEl.src = baselineImages[bIdx];
+        fromMarker.classList.add("hidden");
+        arrowSvg.classList.add("hidden");
+        toMarker.classList.remove("hidden");
+
+        const bx = clamp(step.baselineX);
+        const by = clamp(step.baselineY);
+        toMarker.style.left = `${bx}%`;
+        toMarker.style.top = `${by}%`;
+        toLabel.style.top = by > 75 ? "auto" : "12px";
+        toLabel.style.bottom = by > 75 ? "14px" : "auto";
+        document.getElementById("toLabelText").textContent = `ここへ（${step.targetName}）`;
+      } else {
+        const currentMedia = activeMediaList[step.fromPhotoIdx] || activeMediaList[0];
+        photoTag.textContent = `写真 ${step.fromPhotoIdx + 1}`;
+        imgEl.src = currentMedia.dataUrl;
+        fromMarker.classList.remove("hidden");
+        toMarker.classList.remove("hidden");
+        arrowSvg.classList.remove("hidden");
+
+        let fx = clamp(step.fromX, 10, 90);
+        let fy = clamp(step.fromY, 10, 90);
+        let tx = clamp(step.toX, 10, 90);
+        let ty = clamp(step.toY, 10, 90);
+
+        const dx = tx - fx;
+        const dy = ty - fy;
+        const dist = Math.hypot(dx, dy);
+        if (dist < 15) {
+          const angle = dist === 0 ? Math.PI / 4 : Math.atan2(dy, dx);
+          tx = clamp(fx + Math.cos(angle) * 18, 8, 92);
+          ty = clamp(fy + Math.sin(angle) * 18, 8, 92);
+        }
+
+        fromMarker.style.left = `${fx}%`;
+        fromMarker.style.top = `${fy}%`;
+        toMarker.style.left = `${tx}%`;
+        toMarker.style.top = `${ty}%`;
+
+        const fromIsAbove = fy <= ty;
+        if (fromIsAbove) {
+          fromLabel.style.bottom = "14px";
+          fromLabel.style.top = "auto";
+          toLabel.style.top = "12px";
+          toLabel.style.bottom = "auto";
+        } else {
+          fromLabel.style.top = "12px";
+          fromLabel.style.bottom = "auto";
+          toLabel.style.bottom = "14px";
+          toLabel.style.top = "auto";
+        }
+
+        fromLabel.style.transform = fx < 22 ? "translateX(-15%)" : fx > 78 ? "translateX(-85%)" : "translateX(-50%)";
+        toLabel.style.transform = tx < 22 ? "translateX(-15%)" : tx > 78 ? "translateX(-85%)" : "translateX(-50%)";
+
+        document.getElementById("fromLabelText").textContent = step.itemName;
+        document.getElementById("toLabelText").textContent = step.targetName;
+
+        lineBase.setAttribute("x1", fx);
+        lineBase.setAttribute("y1", fy);
+        lineBase.setAttribute("x2", tx);
+        lineBase.setAttribute("y2", ty);
+
+        lineDash.setAttribute("x1", fx);
+        lineDash.setAttribute("y1", fy);
+        lineDash.setAttribute("x2", tx);
+        lineDash.setAttribute("y2", ty);
+      }
+    }
+
+    document.getElementById("showCurrentPhotoBtn").addEventListener("click", () => {
+      showingBaselinePhoto = false;
+      document.getElementById("showCurrentPhotoBtn").className = "px-2.5 py-1 rounded-lg bg-white text-slate-800 shadow-xs transition";
+      document.getElementById("showBaselinePhotoBtn").className = "px-2.5 py-1 rounded-lg text-slate-500 transition";
+      updatePhotoMarkers(currentSteps[currentStepIndex]);
+    });
+
+    document.getElementById("showBaselinePhotoBtn").addEventListener("click", () => {
+      showingBaselinePhoto = true;
+      document.getElementById("showBaselinePhotoBtn").className = "px-2.5 py-1 rounded-lg bg-white text-slate-800 shadow-xs transition";
+      document.getElementById("showCurrentPhotoBtn").className = "px-2.5 py-1 rounded-lg text-slate-500 transition";
+      updatePhotoMarkers(currentSteps[currentStepIndex]);
+    });
+
+    document.getElementById("replayVoiceBtn").addEventListener("click", () => {
+      const step = currentSteps[currentStepIndex];
+      if (step) speak(step.voiceInstruction);
+    });
+
+    function advanceToNextStep() {
+      currentStepIndex++;
+      showingBaselinePhoto = false;
+      document.getElementById("showCurrentPhotoBtn").className = "px-2.5 py-1 rounded-lg bg-white text-slate-800 shadow-xs transition";
+      document.getElementById("showBaselinePhotoBtn").className = "px-2.5 py-1 rounded-lg text-slate-500 transition";
+
+      if (currentStepIndex < currentSteps.length) {
+        renderCurrentStep();
+        saveActiveSession();
+      } else {
+        clearActiveSession();
+        document.getElementById("stepCard").classList.add("hidden");
+        document.getElementById("completeCard").classList.remove("hidden");
+        document.getElementById("afterCaptureWrap").classList.remove("hidden");
+        document.getElementById("beforeAfterWrap").classList.add("hidden");
+
+        if (isHandsFreeOn && recognition) {
+          isHandsFreeOn = false;
+          updateMicButtonUI(false);
+          try { recognition.stop(); } catch (_) {}
+        }
+
+        // 片付けた物を除いた残りで推定（後で「片付いた部屋」の写真をAIが判定して上書き）
+        const stepKey = (it) => `${it.itemName}|${it.fromPhotoIdx}|${it.fromX}|${it.fromY}`;
+        const doneSet = new Set(currentSteps.map(stepKey));
+        const remaining = allDetectedSteps.filter((it) => !doneSet.has(stepKey(it)));
+        const estimatedAfter = remaining.length === 0 ? 0 : calculateDeterministicClutterScore(remaining, activeMediaList.length);
+        afterScoreSession = estimatedAfter;
+
+        clutterHistory.push({ time: Date.now(), score: estimatedAfter });
+        writeStored("okatazuke_history", clutterHistory);
+        renderClutterGauge(estimatedAfter);
+        updatePaceAndTimingUI();
+
+        speak("おつかれさまでした！片付いた後の部屋を撮るとビフォーアフターの達成カードが作れます。");
+      }
+    }
+
+    document.getElementById("nextStepBtn").addEventListener("click", () => {
+      advanceToNextStep();
+    });
+
+    // 片付いた後の写真撮影 → ビフォーアフター比較＆達成カード生成
+    document.getElementById("afterPhotoInput").addEventListener("change", async (e) => {
+      const file = e.target.files?.[0];
+      if (!file || activeMediaList.length === 0) return;
+
+      try {
+        afterRoomBase64 = await fileToResizedBase64(file, 960);
+      } catch (err) {
+        showMessage(err.message);
+        e.target.value = "";
+        return;
+      }
+
+      document.getElementById("afterCaptureWrap").classList.add("hidden");
+      document.getElementById("beforeAfterWrap").classList.remove("hidden");
+      document.getElementById("baAfterBadge").textContent = "AFTER 判定中…";
+
+      // 片付け後の写真もAIで判定（決め打ちの0%にしない）
+      try {
+        const judge = await callGeminiWithLabeledParts([
+          { text: `片付け前の写真と、片付け後の写真を渡します。片付け後の写真にまだ散らかったまま残っている物だけを挙げてください。片付いた物や、もともと定位置にある物は挙げないでください。
+必ず以下のJSON形式のみで返してください:
+{ "items": [ { "itemName": "string", "isOnFloor": boolean, "isBlocking": boolean } ] }` },
+          { text: "【片付け前】" },
+          { inlineData: { mimeType: "image/jpeg", data: activeMediaList[0].dataUrl.split(",")[1] } },
+          { text: "【片付け後】" },
+          { inlineData: { mimeType: "image/jpeg", data: afterRoomBase64.split(",")[1] } }
+        ]);
+        const leftItems = Array.isArray(judge.items) ? judge.items : [];
+        afterScoreSession = calculateDeterministicClutterScore(leftItems, 1);
+      } catch (err) {
+        console.warn("after judge failed:", err);
+        // 判定できないときは推定値のまま
+      }
+      if (clutterHistory.length > 0) {
+        clutterHistory[clutterHistory.length - 1] = { time: Date.now(), score: afterScoreSession };
+        writeStored("okatazuke_history", clutterHistory);
+      }
+      renderClutterGauge(afterScoreSession);
+      updatePaceAndTimingUI();
+
+      const beforeImg = document.getElementById("baBeforeImg");
+      const afterImg = document.getElementById("baAfterImg");
+      const container = document.getElementById("baSliderContainer");
+
+      beforeImg.src = activeMediaList[0].dataUrl;
+      afterImg.src = afterRoomBase64;
+      beforeImg.style.width = `${container.offsetWidth}px`;
+
+      document.getElementById("baBeforeBadge").textContent = `BEFORE ${beforeScoreSession}%`;
+      document.getElementById("baAfterBadge").textContent = `AFTER ${afterScoreSession}%`;
+
+      speak(afterScoreSession === 0
+        ? "すごい変化ですね！散らかり度ゼロです。達成カードが完成しました。"
+        : `散らかり度は${beforeScoreSession}パーセントから${afterScoreSession}パーセントになりました。達成カードが完成しました。`);
+      e.target.value = "";
+    });
+
+    document.getElementById("baRangeInput").addEventListener("input", (e) => {
+      const val = e.target.value;
+      document.getElementById("baBeforeClip").style.width = `${val}%`;
+      document.getElementById("baDivider").style.left = `${val}%`;
+      const container = document.getElementById("baSliderContainer");
+      document.getElementById("baBeforeImg").style.width = `${container.offsetWidth}px`;
+    });
+
+    document.getElementById("downloadCardBtn").addEventListener("click", () => {
+      if (activeMediaList.length === 0 || !afterRoomBase64) return;
+      const canvas = document.getElementById("shareCardCanvas");
+      const ctx = canvas.getContext("2d");
+
+      const imgB = new Image();
+      const imgA = new Image();
+      imgB.onload = () => {
+        imgA.onload = () => {
+          ctx.fillStyle = "#0F172A";
+          ctx.fillRect(0, 0, 1080, 720);
+
+          ctx.fillStyle = "#10B981";
+          ctx.font = "900 34px sans-serif";
+          ctx.fillText("✨ おかたづけくん 達成レポート", 48, 66);
+
+          ctx.fillStyle = "#94A3B8";
+          ctx.font = "700 22px sans-serif";
+          const dateStr = new Date().toLocaleDateString("ja-JP");
+          ctx.fillText(`${dateStr}  |  散らかり度 ${beforeScoreSession}% → ${afterScoreSession}%`, 48, 104);
+
+          const drawCover = (img, x, y, w, h) => {
+            const scale = Math.max(w / img.width, h / img.height);
+            const nw = img.width * scale;
+            const nh = img.height * scale;
+            ctx.save();
+            ctx.beginPath();
+            ctx.roundRect(x, y, w, h, 24);
+            ctx.clip();
+            ctx.drawImage(img, x + (w - nw) / 2, y + (h - nh) / 2, nw, nh);
+            ctx.restore();
+          };
+
+          drawCover(imgB, 48, 135, 475, 510);
+          drawCover(imgA, 557, 135, 475, 510);
+
+          ctx.fillStyle = "#F43F5E";
+          ctx.beginPath(); ctx.roundRect(70, 155, 190, 44, 22); ctx.fill();
+          ctx.fillStyle = "#FFFFFF"; ctx.font = "900 22px sans-serif";
+          ctx.fillText(`BEFORE ${beforeScoreSession}%`, 90, 185);
+
+          ctx.fillStyle = "#10B981";
+          ctx.beginPath(); ctx.roundRect(579, 155, 180, 44, 22); ctx.fill();
+          ctx.fillStyle = "#FFFFFF";
+          ctx.fillText(`AFTER ${afterScoreSession}%`, 602, 185);
+
+          const link = document.createElement("a");
+          link.download = `okatazuke_report_${Date.now()}.png`;
+          link.href = canvas.toDataURL("image/png");
+          link.click();
+        };
+        imgA.src = afterRoomBase64;
+      };
+      imgB.src = activeMediaList[0].dataUrl;
+    });
+
+    document.getElementById("resetToHomeBtn").addEventListener("click", () => {
+      clearActiveSession();
+      mediaQueue = [];
+      renderMediaQueueUI();
+      document.getElementById("completeCard").classList.add("hidden");
+      document.getElementById("captureBox").classList.remove("hidden");
+    });
+
+    // モード2：置き場所を聞く（複数写真比較にも対応）
+    document.getElementById("placePhotoInput").addEventListener("change", async (e) => {
+      const files = Array.from(e.target.files || []).slice(0, 4);
+      if (files.length === 0) return;
+
+      const itemName = document.getElementById("itemNameInput").value.trim() || "このアイテム";
+      document.getElementById("placeResultCard").classList.add("hidden");
+      document.getElementById("placeLoading").classList.remove("hidden");
+
+      try {
+        const placeImages = [];
+        for (const f of files) {
+          placeImages.push(await fileToResizedBase64(f, 900));
+        }
+
+        const parts = [{
+          text: `あなたはインテリアと収納の専門家です。
+ユーザーが撮影した${placeImages.length}枚の候補写真（写真1〜写真${placeImages.length}）を見比べて、「${itemName}」を最も美しく、かつ使いやすく置けるベストな写真番号と位置を1か所提案してください。
+
+座標は画像の左上を(0, 0)、右下を(1000, 1000)とした正規化座標で返してください。
+必ず以下のJSON形式のみで返してください:
+{
+  "chosenPhotoIndex": 1から${placeImages.length}の整数,
+  "spotTitle": "おすすめの置き場所の短いタイトル（例：写真2の棚・右上の空きスペース）",
+  "reason": "色彩バランスや生活動線から見た理由と音声アドバイス（2文以内）",
+  "bestX1000": number,
+  "bestY1000": number
+}`
+        }];
+
+        placeImages.forEach((b64, idx) => {
+          parts.push({ text: `【候補写真 ${idx + 1}】` });
+          parts.push({ inlineData: { mimeType: "image/jpeg", data: b64.split(",")[1] } });
+        });
+
+        const res = await callGeminiWithLabeledParts(parts);
+
+        document.getElementById("placeLoading").classList.add("hidden");
+        document.getElementById("placeResultCard").classList.remove("hidden");
+
+        const chosenIdx = Math.max(0, Math.min(placeImages.length - 1, (Number(res.chosenPhotoIndex) || 1) - 1));
+        document.getElementById("placeAnnotatedImg").src = placeImages[chosenIdx];
+
+        const tagEl = document.getElementById("placeChosenPhotoTag");
+        if (placeImages.length > 1) {
+          tagEl.textContent = `写真 ${chosenIdx + 1} がベスト！`;
+          tagEl.classList.remove("hidden");
+        } else {
+          tagEl.classList.add("hidden");
+        }
+
+        const bx = Math.max(10, Math.min(90, Math.round((Number(res.bestX1000) || 500) / 10)));
+        const by = Math.max(10, Math.min(90, Math.round((Number(res.bestY1000) || 500) / 10)));
+        const marker = document.getElementById("placeMarker");
+        marker.style.left = `${bx}%`;
+        marker.style.top = `${by}%`;
+        const placeLabel = document.getElementById("placeLabel");
+        placeLabel.style.top = by > 75 ? "auto" : "14px";
+        placeLabel.style.bottom = by > 75 ? "16px" : "auto";
+        placeLabel.style.transform = bx < 22 ? "translateX(-15%)" : bx > 78 ? "translateX(-85%)" : "translateX(-50%)";
+
+        document.getElementById("placeSpotTitle").textContent = `✨ ${res.spotTitle || "おすすめの位置"}`;
+        document.getElementById("placeReasonText").textContent = res.reason || "";
+
+        lastPlaceProposal = { item: itemName, spot: res.spotTitle || "おすすめの位置" };
+        lastPlaceSpeech = `${res.spotTitle}がおすすめです。${res.reason}`;
+        speak(lastPlaceSpeech);
+
+      } catch (err) {
+        console.error(err);
+        document.getElementById("placeLoading").classList.add("hidden");
+        showMessage(err.message || "解析に失敗しました。もう一度お試しください。");
+      } finally {
+        e.target.value = "";
+      }
+    });
+
+    document.getElementById("replayPlaceVoiceBtn").addEventListener("click", () => {
+      if (lastPlaceSpeech) speak(lastPlaceSpeech);
+    });
+
+    document.getElementById("saveSpotRuleBtn").addEventListener("click", () => {
+      if (!lastPlaceProposal) return;
+      customSpots.push(lastPlaceProposal);
+      writeStored("okatazuke_spots", customSpots);
+      renderCustomSpotsUI();
+      speak(`${lastPlaceProposal.item}の定位置を記憶しました。次回のお片付けから案内します。`);
+      showMessage(`「${lastPlaceProposal.item} → ${lastPlaceProposal.spot}」を記憶しました！`);
+    });
+
+    // 下部タブ切り替え
+    const tabTidyBtn = document.getElementById("tabTidyBtn");
+    const tabPlaceBtn = document.getElementById("tabPlaceBtn");
+    const tidyView = document.getElementById("tidyView");
+    const placeView = document.getElementById("placeView");
+
+    tabTidyBtn.addEventListener("click", () => {
+      tidyView.classList.remove("hidden");
+      placeView.classList.add("hidden");
+      tabTidyBtn.className = "flex-1 py-2.5 rounded-2xl bg-emerald-500 text-white font-black text-sm transition flex items-center justify-center gap-1.5 shadow-sm";
+      tabPlaceBtn.className = "flex-1 py-2.5 rounded-2xl bg-slate-100 text-slate-500 font-black text-sm transition flex items-center justify-center gap-1.5";
+    });
+
+    tabPlaceBtn.addEventListener("click", () => {
+      tidyView.classList.add("hidden");
+      placeView.classList.remove("hidden");
+      tabPlaceBtn.className = "flex-1 py-2.5 rounded-2xl bg-sky-500 text-white font-black text-sm transition flex items-center justify-center gap-1.5 shadow-sm";
+      tabTidyBtn.className = "flex-1 py-2.5 rounded-2xl bg-slate-100 text-slate-500 font-black text-sm transition flex items-center justify-center gap-1.5";
+    });
+
+    // 設定モーダル制御
+    const settingsModal = document.getElementById("settingsModal");
+    document.getElementById("openSettingsBtn").addEventListener("click", () => settingsModal.classList.remove("hidden"));
+    document.getElementById("closeSettingsBtn").addEventListener("click", () => settingsModal.classList.add("hidden"));
+
+    // APIキーの保存
+    (function setupApiKeyUI() {
+      const input = document.getElementById("apiKeyInput");
+      const status = document.getElementById("apiKeyStatus");
+      if (getUserApiKey()) { input.value = getUserApiKey(); status.textContent = "保存済みです（この端末のブラウザにだけ保存）。"; }
+      document.getElementById("saveApiKeyBtn").addEventListener("click", () => {
+        const v = input.value.trim();
+        try {
+          if (v) localStorage.setItem(API_KEY_STORAGE, v); else localStorage.removeItem(API_KEY_STORAGE);
+          status.textContent = v ? "保存しました。これで写真の解析が使えます。" : "キーを削除しました。";
+        } catch (_) {
+          status.textContent = "このブラウザでは保存できませんでした（プライベートブラウズを解除してください）。";
+        }
+      });
+    })();
+
+    document.getElementById("baselinePhotoInput").addEventListener("change", async (e) => {
+      const files = Array.from(e.target.files || []);
+      if (files.length === 0) return;
+
+      for (const f of files) {
+        if (baselineImages.length >= MAX_BASELINE_ITEMS) break;
+        try {
+          baselineImages.push(await fileToResizedBase64(f, 850));
+        } catch (err) {
+          showMessage(err.message);
+        }
+      }
+      try {
+        localStorage.setItem("okatazuke_baselines_v2", JSON.stringify(baselineImages));
+      } catch (_) {
+        showMessage("保存容量の上限のため一部のみ一時保持します");
+      }
+      updateBaselineUI();
+      speak("きれいな部屋の基準を登録しました！");
+      e.target.value = "";
+    });
+
+    document.getElementById("clearBaselineBtn").addEventListener("click", () => {
+      baselineImages = [];
+      localStorage.removeItem("okatazuke_baselines_v2");
+      localStorage.removeItem("okatazuke_baseline");
+      updateBaselineUI();
+    });
+
+    document.getElementById("clearHistoryBtn").addEventListener("click", () => {
+      clutterHistory = [];
+      customSpots = [];
+      localStorage.removeItem("okatazuke_history");
+      localStorage.removeItem("okatazuke_spots");
+      clutterPercentEl.textContent = "--";
+      clutterRingEl.style.strokeDashoffset = 201;
+      clutterEmojiEl.textContent = "🏠";
+      paceSubtextEl.textContent = "";
+      paceSubtextEl.classList.add("hidden");
+      timingBannerEl.classList.add("hidden");
+      renderCustomSpotsUI();
+      settingsModal.classList.add("hidden");
+    });
+
+    init();
+  </script>
+</body>
+</html>
