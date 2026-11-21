@@ -341,6 +341,7 @@
         <div class="bg-emerald-50/50 rounded-2xl p-3.5 border border-emerald-100/80">
           <p id="stepTitle" class="text-base font-black text-slate-800 leading-snug"></p>
           <p id="stepDetail" class="text-xs font-bold text-slate-600 mt-1 leading-relaxed"></p>
+          <p id="stepTip" class="hidden text-xs font-bold text-emerald-700 mt-1.5 leading-relaxed"></p>
         </div>
 
         <!-- 完了ボタン -->
@@ -484,7 +485,7 @@
   <div id="settingsModal" class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-xs z-50 flex items-end sm:items-center justify-center p-4">
     <div class="bg-white w-full max-w-md rounded-3xl p-6 space-y-4 shadow-2xl max-h-[85vh] overflow-y-auto">
       <div class="flex items-center justify-between">
-        <h3 class="text-lg font-black text-slate-800">設定 <span class="text-[10px] font-bold text-slate-400">v11</span></h3>
+        <h3 class="text-lg font-black text-slate-800">設定 <span class="text-[10px] font-bold text-slate-400">v12</span></h3>
         <button id="closeSettingsBtn" type="button" class="w-8 h-8 rounded-full bg-slate-100 text-slate-500 font-bold">✕</button>
       </div>
 
@@ -1227,7 +1228,7 @@
       if (!file) return;
       let dataUrl;
       try {
-        dataUrl = await fileToResizedBase64(file, 960);
+        dataUrl = await fileToResizedBase64(file, 1280);
       } catch (err) {
         showMessage(err.message);
         return;
@@ -1261,13 +1262,14 @@
     let lastCallInfo = null;  // 直近の通信の記録（設定画面に表示）
 
     // 推論（thinking）を最小にする指定の書き方の候補。受け付けられた書き方を記憶する
+    // 速さと指示の質のバランスで low を優先（minimal は考えが浅くなりやすい）
     const THINK_VARIANTS = [
-      { id: "cfg-minimal", gc: { thinkingConfig: { thinkingLevel: "minimal" } } },
       { id: "cfg-low",     gc: { thinkingConfig: { thinkingLevel: "low" } } },
-      { id: "flat-minimal", gc: { thinkingLevel: "minimal" } },
+      { id: "cfg-minimal", gc: { thinkingConfig: { thinkingLevel: "minimal" } } },
+      { id: "flat-low",    gc: { thinkingLevel: "low" } },
       { id: "none",        gc: {} }
     ];
-    const THINK_STORAGE = "okatazuke_think_variant_v2";
+    const THINK_STORAGE = "okatazuke_think_variant_v3";
     function thinkOrder(model) {
       let saved = "";
       try { saved = (JSON.parse(localStorage.getItem(THINK_STORAGE) || "{}"))[model] || ""; } catch (_) {}
@@ -1378,16 +1380,28 @@
     }
 
     // 決定論的スコア算出
+    function itemWeight(it) {
+      const act = normalizeAction(it.action);
+      let w = act === "揃える" ? 3 : act === "まとめる" ? 5 : 7; // 並べ直すだけの物は軽く数える
+      if (it.isOnFloor) w += 5;
+      if (it.isBlocking) w += 3;
+      if (act === "捨てる" || act === "洗う") w += 2;
+      return w;
+    }
     function calculateDeterministicClutterScore(items, photoCount) {
       if (!items || items.length === 0) return 0;
       let points = 0;
-      for (const it of items) {
-        points += 11;
-        if (it.isOnFloor) points += 6;
-        if (it.isBlocking) points += 5;
-      }
+      for (const it of items) points += itemWeight(it);
       const densityFactor = photoCount > 1 ? 0.85 : 1.0;
-      return Math.min(98, Math.max(8, Math.round(points * densityFactor)));
+      return Math.min(98, Math.max(5, Math.round(points * densityFactor)));
+    }
+    function normalizeAction(a) {
+      const v = String(a || "");
+      if (/捨/.test(v)) return "捨てる";
+      if (/洗/.test(v)) return "洗う";
+      if (/まとめ/.test(v)) return "まとめる";
+      if (/揃|そろ/.test(v)) return "揃える";
+      return "しまう";
     }
 
     // クロス空間＆最短経路アルゴリズム（同じ部屋の複数アングルから重複を除外し、写真間移動も最適化）
@@ -1426,7 +1440,8 @@
         const baseY = it.baselineY1000 != null ? Math.round(Number(it.baselineY1000) / 10) : toY;
 
         const zone = fromPhotoIdx * 4 + (fromY < 50 ? 0 : 2) + (fromX < 50 ? 0 : 1);
-        const impact = 11 + (it.isOnFloor ? 6 : 0) + (it.isBlocking ? 5 : 0);
+        const impact = itemWeight(it);
+        const action = normalizeAction(it.action);
 
         return {
           ...it,
@@ -1440,7 +1455,8 @@
           baselineX: baseX,
           baselineY: baseY,
           zone,
-          impact
+          impact,
+          action
         };
       });
 
@@ -1473,7 +1489,8 @@
           const item = remaining[i];
           const photoSwitchPenalty = item.fromPhotoIdx === curPhoto ? 0 : 75;
           const moveDist = Math.hypot(item.fromX - curX, item.fromY - curY);
-          const blockBonus = item.isBlocking ? -28 : 0;
+          // 上に乗っている物・ゴミ（場所が空く）・洗い物を先に
+          const blockBonus = (item.isBlocking ? -28 : 0) + (item.action === "捨てる" ? -35 : item.action === "洗う" ? -15 : 0);
           const cost = photoSwitchPenalty + moveDist + blockBonus;
           if (cost < bestCost) {
             bestCost = cost;
@@ -1519,41 +1536,65 @@
           : "";
 
         const contentParts = [];
-        let introText = `あなたは同じ1つの部屋を別角度から撮影した複数の写真・動画シーンを空間的に統合し、全体構造を理解する精密お片付けAIです。\n`;
+        let introText = `あなたは整理収納アドバイザーの資格を持つ、片付けのプロです。写真に写っている部屋を見て、住む人が迷わず手を動かせるよう、具体的で洗練された片付けの手順を作ります。\n`;
         if (hasBaseline) {
-          introText += `まず「きれいな基準写真」（基準1〜基準${baselineImages.length}）を提示し、続いて同じ現在の部屋を別アングルから撮った「現在の部屋の写真」（写真1〜写真${activeMediaList.length}）を提示します。\n`;
+          introText += `まず「きれいな基準写真」（基準1〜基準${baselineImages.length}）を提示します。これがこの家の定位置の見本です。続いて同じ部屋の「現在の部屋の写真」（写真1〜写真${activeMediaList.length}）を提示します。\n`;
         } else {
-          introText += `これから同じ1つの部屋を別アングルから撮った「現在の部屋の写真」（写真1〜写真${activeMediaList.length}）を提示します。\n`;
+          introText += `これから同じ部屋の「現在の部屋の写真」（写真1〜写真${activeMediaList.length}）を提示します。\n`;
         }
 
         introText += `
-【最重要タスク：同一空間の統合理解と重複除外】
-1. 写真1〜写真${activeMediaList.length}は**すべて同じ1つの部屋の別アングル（または連続動画フレーム）**です。まず共通して写っている家具（棚の端、机、カーテン、収納ボックス、床の模様など）を手がかりに、1つのつながった部屋の立体構造を頭の中で統合してください。
-2. **重複の厳密な除外**：同じ散らかり物が複数の写真に重なって写っている場合は、**絶対に2回カウント・指示せず、最も見やすく正面に近い1枚（fromPhotoIndex）だけを選んで1回だけリストアップ**してください。
-3. **別の写真への最適収納ルーティング**：1枚の写真の中だけでなく、「写真1（机）にある本を、写真2（本棚）の空いている段へしまう」のように、同じ部屋内の別の写真に写っている最適な収納先（toPhotoIndex）へつなぐ提案を積極的に行ってください。
-4. 写真に実際に写っている物だけを正確に挙げてください。${customRulesText}
+【手順1：場所の種類を見極める】
+写真の場所が何か（キッチン、リビング、デスク、寝室、洗面所、玄関、収納の中など）を判断し、sceneType に入れてください。以下はその場所に合った原則です。必ず当てはめて提案してください。
 
-【出力座標ルール（0〜1000正規化座標）】
-・sharedLandmarks: 複数写真をつなぐ手がかりになった共通の家具・目印の短いリスト（1枚のみなら空配列）
-・fromPhotoIndex: 対象アイテムが最も見やすく写っている「現在の部屋の写真」の番号（1〜${activeMediaList.length}）
-・fromBox: [ymin, xmin, ymax, xmax] 対象アイテムを囲む正確なバウンディングボックス(0〜1000)
-・toPhotoIndex: しまうべき収納先が写っている「現在の部屋の写真」の番号（1〜${activeMediaList.length}）。同じ写真内なら fromPhotoIndex と同じ番号、別の写真に収納先があるならその写真の番号を指定。
-・toX1000, toY1000: toPhotoIndex の写真内におけるしまうべき定位置の座標(0〜1000)
+・キッチン：作業台とコンロまわりは何も置かない状態を目指す（出しっぱなしは毎日使う物だけ）。調理道具はコンロの近く、食器はシンクや食器棚の近く、と「使う場所の近く」に置く。重い鍋やフライパンは下段、軽い物や使用頻度の低い物は上段。調味料は種類ごとにまとめ、ラベルを手前にして背の高い順に奥から並べる。食器は同じ種類・同じ大きさで重ねる。汚れた食器はシンクへ（action: 洗う）。空き容器・ゴミ・期限切れはゴミ箱へ（action: 捨てる）。冷蔵庫に入れるべき食品は冷蔵庫へ。
+・リビング：床とテーブルの上には何も置かない状態を目指す。リモコンや充電器は1か所にまとめる。本・雑誌は背の高さをそろえて立てる。衣類は畳むかハンガーへ。
+・デスク：天板の上は今使う物だけ。文具は種類ごとにまとめて引き出しへ。書類は「捨てる／保管」に分ける。ケーブルは束ねる。
+・寝室・クローゼット：衣類は種類と色でそろえ、ハンガーの向きをそろえる。床置きの服は「洗う」か「しまう」に分ける。
+・共通：床に物を直置きしない。同じ種類の物は1か所にまとめる。見える場所に置く物は、向き・高さ・色をそろえる。収納は詰め込みすぎない（7割程度）。
+
+【手順2：散らかっている物を漏れなく挙げる】
+・写真に実際に写っている物だけを挙げてください。見えない物を想像で足してはいけません。
+・定位置にない物、出しっぱなしの物、ゴミ、洗い物、向きや並びが乱れている物を、できるだけ漏れなく挙げてください。目安は1枚あたり6〜15個です。小さな物でも、片付けると見た目が良くなる物は挙げてください。
+・同じ種類の小物がまとまって散らばっている場合（例：調味料の小瓶4本）は、1つの手順にまとめて構いません。
+・同じ物が複数の写真に写っている場合は、最も見やすい1枚（fromPhotoIndex）だけで1回だけ挙げてください。写真は同じ部屋の別アングルなので、共通の家具などを手がかりに部屋全体のつながりを理解してください。${customRulesText}
+
+【手順3：物ごとに「何をするか」と「どう置くか」を決める】
+・action は次のどれか1つ：「しまう」「捨てる」「洗う」「まとめる」「揃える」。
+  - 捨てる：ゴミ・空き容器・不要な紙など。ゴミ箱が写っていればそこを to にする。写っていなければ to は出口側の床の端にして targetName は「ゴミ袋へ」。
+  - 洗う：汚れた食器や洗濯物。to はシンクや洗濯かごなど。
+  - まとめる／揃える：その場で同じ種類を寄せる・向きや高さをそろえる。to は寄せ集める場所。
+・しまう先（to）は、写真に写っている具体的な場所（棚の何段目のどのあたり、引き出し、フックなど）を選んでください。別の写真に写っている場所でも構いません（toPhotoIndex で指定）。
+・placementTip には「どう置くと美しく使いやすいか」を具体的に1文で書いてください。例：「ラベルを手前に向け、背の高い瓶を奥にして並べる」「取っ手を同じ向きにそろえて重ねる」「よく使う物を手前、たまに使う物を奥へ」。
+・voiceInstruction は、どこにある何を、どこへ、どうするかが一度聞いて分かる、40字前後の自然な話し言葉にしてください。例：「コンロ横の白い鍋を、シンク下の左の段に重ねてしまいましょう」。
+
+【出力の決まり（座標は画像の左上(0,0)〜右下(1000,1000)の正規化座標）】
+・sceneType: 場所の種類（例：「キッチン」）
+・sharedLandmarks: 複数写真をつなぐ手がかりにした共通の家具・目印（1枚なら空配列）
+・fromPhotoIndex: 対象が最も見やすく写っている写真の番号（1〜${activeMediaList.length}）
+・fromBox: [ymin, xmin, ymax, xmax] 対象を囲む正確な枠
+・toPhotoIndex: 行き先が写っている写真の番号（1〜${activeMediaList.length}）
+・toX1000, toY1000: 行き先の座標
 ・baselinePhotoIndex: ${hasBaseline ? `基準写真の番号(1〜${baselineImages.length})` : "1"}
-・baselineX1000, baselineY1000: ${hasBaseline ? "基準写真内における定位置座標(0〜1000)" : "toX1000, toY1000と同じ値"}
-・itemName: 写っている物の短い名前（例：「テーブルの黒いリュック」）
-・targetName: しまう場所の短い名前（例：「写真2の本棚・下段」）
-・voiceInstruction: 「写真1の〜を、写真2の〜へしまいましょう」のように場所がすぐ分かる優しい音声指示（1文）
-・isOnFloor: 床に直置きされている場合 true
-・isBlocking: 他の物を片付ける邪魔になっている・上に乗っている場合 true
+・baselineX1000, baselineY1000: ${hasBaseline ? "基準写真の中での定位置の座標" : "toX1000, toY1000 と同じ値"}
+・itemName: 物の短い名前（位置が分かるように。例：「コンロ横の白い鍋」）
+・targetName: 行き先の短い名前（例：「シンク下・左の段」）
+・action: 「しまう」「捨てる」「洗う」「まとめる」「揃える」のいずれか
+・placementTip: 置き方のコツ（1文）
+・voiceInstruction: 音声で読み上げる指示（40字前後）
+・isOnFloor: 床に直置きなら true
+・isBlocking: 他の物の上に乗っている、または他を片付ける邪魔になっているなら true
 
 必ず以下のJSON形式のみで返してください:
 {
+  "sceneType": "string",
   "sharedLandmarks": ["string"],
   "items": [
     {
       "itemName": "string",
       "targetName": "string",
+      "action": "string",
+      "placementTip": "string",
       "voiceInstruction": "string",
       "fromPhotoIndex": number,
       "fromBox": [number, number, number, number],
@@ -1580,7 +1621,7 @@
         }
 
         // 枚数が多いほど1枚を小さくして送る（1〜2枚: 900px / 3〜4枚: 720px / 5枚以上: 600px）
-        const sendDim = activeMediaList.length <= 2 ? 900 : activeMediaList.length <= 4 ? 720 : 600;
+        const sendDim = activeMediaList.length === 1 ? 1024 : activeMediaList.length === 2 ? 900 : activeMediaList.length <= 4 ? 720 : 600;
         for (let i = 0; i < activeMediaList.length; i++) {
           const small = await shrinkDataUrl(activeMediaList[i].dataUrl, sendDim);
           contentParts.push({ text: `【現在の部屋 写真${i + 1}】` });
@@ -1734,7 +1775,12 @@
 
       document.getElementById("stepCard").classList.remove("hidden");
       document.getElementById("stepCounter").textContent = `ステップ ${currentStepIndex + 1} / ${currentSteps.length}`;
-      document.getElementById("stepTitle").textContent = `${step.itemName} → ${step.targetName}`;
+      const ACTION_ICON = { "しまう": "📦", "捨てる": "🗑️", "洗う": "🧽", "まとめる": "🧺", "揃える": "📐" };
+      const act = normalizeAction(step.action);
+      document.getElementById("stepTitle").textContent = `${ACTION_ICON[act]} ${act}：${step.itemName} → ${step.targetName}`;
+      const tipEl = document.getElementById("stepTip");
+      tipEl.textContent = step.placementTip ? `💡 ${step.placementTip}` : "";
+      tipEl.classList.toggle("hidden", !step.placementTip);
       document.getElementById("stepDetail").textContent = step.voiceInstruction;
 
       const isCrossPhoto = step.fromPhotoIdx !== step.toPhotoIdx && activeMediaList.length > 1;
@@ -1863,6 +1909,12 @@
           toLabel.style.bottom = "14px";
           toLabel.style.top = "auto";
         }
+
+        // 写真の上下の端ではラベルが切れないよう内側に出す
+        const labelAbove = (el) => { el.style.bottom = "14px"; el.style.top = "auto"; };
+        const labelBelow = (el) => { el.style.top = "12px"; el.style.bottom = "auto"; };
+        if (ty > 80) labelAbove(toLabel); else if (ty < 15) labelBelow(toLabel);
+        if (fy > 80) labelAbove(fromLabel); else if (fy < 15) labelBelow(fromLabel);
 
         fromLabel.style.transform = fx < 22 ? "translateX(-15%)" : fx > 78 ? "translateX(-85%)" : "translateX(-50%)";
         toLabel.style.transform = tx < 22 ? "translateX(-15%)" : tx > 78 ? "translateX(-85%)" : "translateX(-50%)";
