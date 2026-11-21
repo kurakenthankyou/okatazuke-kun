@@ -483,7 +483,7 @@
   <div id="settingsModal" class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-xs z-50 flex items-end sm:items-center justify-center p-4">
     <div class="bg-white w-full max-w-md rounded-3xl p-6 space-y-4 shadow-2xl max-h-[85vh] overflow-y-auto">
       <div class="flex items-center justify-between">
-        <h3 class="text-lg font-black text-slate-800">設定 <span class="text-[10px] font-bold text-slate-400">v9</span></h3>
+        <h3 class="text-lg font-black text-slate-800">設定 <span class="text-[10px] font-bold text-slate-400">v10</span></h3>
         <button id="closeSettingsBtn" type="button" class="w-8 h-8 rounded-full bg-slate-100 text-slate-500 font-bold">✕</button>
       </div>
 
@@ -522,6 +522,7 @@
           <button id="saveApiKeyBtn" type="button" class="shrink-0 px-3 py-2.5 rounded-xl bg-emerald-500 text-white text-xs font-black">保存</button>
         </div>
         <p id="apiKeyStatus" class="text-[11px] font-bold text-slate-400">この端末のブラウザにだけ保存され、Google以外には送信されません。</p>
+        <p id="lastCallInfo" class="text-[10px] font-bold text-slate-400 whitespace-pre-wrap break-all"></p>
       </div>
 
       <!-- 音声設定 -->
@@ -1184,8 +1185,9 @@
 
     // Gemini API 呼び出し（ラベル付きマルチモーダルパーツ対応）
     // 使えるモデルを順に試す（提供終了・アクセス制限で 404 になったら次へ）。成功したモデルは記憶して次回から最初に使う
-    const MODEL_CANDIDATES = ["gemini-3.8-flash", "gemini-flash-latest", "gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-2.5-flash"];
-    const MODEL_STORAGE = "okatazuke_gemini_model";
+    // 速さ優先の順。3.8 Flash は品質優先の重いモデルなので候補から外す
+    const MODEL_CANDIDATES = ["gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-flash-latest", "gemini-2.5-flash"];
+    const MODEL_STORAGE = "okatazuke_gemini_model_v2"; // 旧版が記憶した 3.8 を使わないようキー名を変更
     function modelOrder() {
       let saved = "";
       try { saved = localStorage.getItem(MODEL_STORAGE) || ""; } catch (_) {}
@@ -1194,44 +1196,65 @@
 
     const GEMINI_TIMEOUT_MS = 90000;
     let currentAbort = null; // キャンセルボタン用
-    function noThinkingConfig() { try { return localStorage.getItem("okatazuke_no_thinkcfg") === "1"; } catch (_) { return false; } }
+    let lastCallInfo = null;  // 直近の通信の記録（設定画面に表示）
+
+    // 推論（thinking）を最小にする指定の書き方の候補。受け付けられた書き方を記憶する
+    const THINK_VARIANTS = [
+      { id: "cfg-minimal", gc: { thinkingConfig: { thinkingLevel: "minimal" } } },
+      { id: "cfg-low",     gc: { thinkingConfig: { thinkingLevel: "low" } } },
+      { id: "flat-minimal", gc: { thinkingLevel: "minimal" } },
+      { id: "none",        gc: {} }
+    ];
+    const THINK_STORAGE = "okatazuke_think_variant_v2";
+    function thinkOrder(model) {
+      let saved = "";
+      try { saved = (JSON.parse(localStorage.getItem(THINK_STORAGE) || "{}"))[model] || ""; } catch (_) {}
+      const found = THINK_VARIANTS.find((v) => v.id === saved);
+      return found ? [found, ...THINK_VARIANTS.filter((v) => v !== found)] : [...THINK_VARIANTS];
+    }
+    function rememberThink(model, id) {
+      try {
+        const m = JSON.parse(localStorage.getItem(THINK_STORAGE) || "{}");
+        m[model] = id; localStorage.setItem(THINK_STORAGE, JSON.stringify(m));
+      } catch (_) {}
+    }
 
     async function callGeminiWithLabeledParts(contentParts) {
       const userKey = getUserApiKey();
       const headers = { "Content-Type": "application/json" };
       if (userKey) headers["x-goog-api-key"] = userKey; // キーはURLに載せずヘッダーで送る
-      const makeBody = (withThinking) => JSON.stringify({
+      const makeBody = (variant) => JSON.stringify({
         contents: [{ role: "user", parts: contentParts }],
-        generationConfig: Object.assign(
-          { responseMimeType: "application/json", temperature: 0.15 },
-          // 考える時間を短くして速く返してもらう（対応していないモデルなら外して再送）
-          withThinking ? { thinkingConfig: { thinkingLevel: "low" } } : {}
-        )
+        generationConfig: Object.assign({ responseMimeType: "application/json", temperature: 0.15 }, variant.gc)
       });
 
       const ctrl = new AbortController();
       currentAbort = ctrl;
       const timer = setTimeout(() => ctrl.abort("timeout"), GEMINI_TIMEOUT_MS);
+      const t0 = performance.now();
+      const trail = [];
       try {
         let lastStatus = 0;
         for (const model of modelOrder()) {
           const base = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
           const url = userKey ? base : `${base}?key=${apiKey}`;
-          let withThinking = !noThinkingConfig();
-          let res = await fetch(url, { method: "POST", headers, body: makeBody(withThinking), signal: ctrl.signal });
-          if (res.status === 400 && withThinking) {
+          let res = null, usedVariant = null;
+          for (const variant of thinkOrder(model)) {
+            const ts = performance.now();
+            res = await fetch(url, { method: "POST", headers, body: makeBody(variant), signal: ctrl.signal });
+            trail.push(`${model}/${variant.id}:${res.status}(${((performance.now() - ts) / 1000).toFixed(1)}s)`);
+            usedVariant = variant;
+            if (res.status !== 400) break;
             const t = await res.text();
-            if (/thinking/i.test(t)) {
-              try { localStorage.setItem("okatazuke_no_thinkcfg", "1"); } catch (_) {}
-              withThinking = false;
-              res = await fetch(url, { method: "POST", headers, body: makeBody(false), signal: ctrl.signal });
-            } else {
-              res = new Response(t, { status: 400 });
-            }
+            // 推論の指定が原因の 400 なら次の書き方で送り直す。それ以外の 400 はそのまま扱う
+            if (!/thinking|Unknown name|Invalid JSON payload/i.test(t)) { res = new Response(t, { status: 400 }); break; }
           }
           if (res.ok) {
             try { localStorage.setItem(MODEL_STORAGE, model); } catch (_) {}
+            rememberThink(model, usedVariant.id);
             const data = await res.json();
+            lastCallInfo = { model, think: usedVariant.id, sec: ((performance.now() - t0) / 1000).toFixed(1), trail };
+            showLastCallInfo();
             const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
             return JSON.parse(rawText.replace(/^```(?:json)?\s*|\s*```$/g, ""));
           }
@@ -1253,6 +1276,8 @@
         }
         throw new Error(`使えるGeminiモデルが見つかりませんでした (${lastStatus})`);
       } catch (err) {
+        lastCallInfo = { model: "-", think: "-", sec: ((performance.now() - t0) / 1000).toFixed(1), trail, error: String(err && err.message || err) };
+        showLastCallInfo();
         if (ctrl.signal.aborted) {
           throw new Error(ctrl.signal.reason === "timeout"
             ? "AIの応答に時間がかかりすぎたため中断しました。写真の枚数を減らしてもう一度お試しください。"
@@ -1263,6 +1288,13 @@
         clearTimeout(timer);
         if (currentAbort === ctrl) currentAbort = null;
       }
+    }
+
+    function showLastCallInfo() {
+      const el = document.getElementById("lastCallInfo");
+      if (!el || !lastCallInfo) return;
+      el.textContent = `前回の解析：${lastCallInfo.sec}秒 ／ モデル ${lastCallInfo.model} ／ 推論 ${lastCallInfo.think}\n` +
+        lastCallInfo.trail.join(" → ") + (lastCallInfo.error ? `\nエラー：${lastCallInfo.error}` : "");
     }
 
     // 送信用に写真を小さくする（画面表示用の写真はそのまま）
