@@ -187,7 +187,9 @@
       <div id="loadingBox" class="hidden bg-white rounded-3xl p-8 shadow-sm border border-slate-100 text-center space-y-3">
         <div class="w-12 h-12 mx-auto rounded-full border-4 border-emerald-100 border-t-emerald-500 animate-spin"></div>
         <p class="font-extrabold text-slate-700">部屋全体の最短ルートを計算中...</p>
-        <p class="text-xs text-slate-400">複数の写真をつないで最適な片付け順を組み立てています</p>
+        <p id="loadingSubText" class="text-xs text-slate-400">複数の写真をつないで最適な片付け順を組み立てています</p>
+        <p id="loadingElapsed" class="text-[11px] font-bold text-slate-400">経過 0秒</p>
+        <button id="cancelAnalyzeBtn" type="button" class="px-4 py-2 rounded-xl bg-slate-100 text-slate-600 text-xs font-black active:scale-95">キャンセル</button>
       </div>
 
       <!-- ステップ実行＆クロス空間マーキングカード -->
@@ -481,7 +483,7 @@
   <div id="settingsModal" class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-xs z-50 flex items-end sm:items-center justify-center p-4">
     <div class="bg-white w-full max-w-md rounded-3xl p-6 space-y-4 shadow-2xl max-h-[85vh] overflow-y-auto">
       <div class="flex items-center justify-between">
-        <h3 class="text-lg font-black text-slate-800">設定 <span class="text-[10px] font-bold text-slate-400">v8</span></h3>
+        <h3 class="text-lg font-black text-slate-800">設定 <span class="text-[10px] font-bold text-slate-400">v9</span></h3>
         <button id="closeSettingsBtn" type="button" class="w-8 h-8 rounded-full bg-slate-100 text-slate-500 font-bold">✕</button>
       </div>
 
@@ -1190,40 +1192,95 @@
       return saved ? [saved, ...MODEL_CANDIDATES.filter((m) => m !== saved)] : [...MODEL_CANDIDATES];
     }
 
+    const GEMINI_TIMEOUT_MS = 90000;
+    let currentAbort = null; // キャンセルボタン用
+    function noThinkingConfig() { try { return localStorage.getItem("okatazuke_no_thinkcfg") === "1"; } catch (_) { return false; } }
+
     async function callGeminiWithLabeledParts(contentParts) {
       const userKey = getUserApiKey();
       const headers = { "Content-Type": "application/json" };
       if (userKey) headers["x-goog-api-key"] = userKey; // キーはURLに載せずヘッダーで送る
-      const body = JSON.stringify({
+      const makeBody = (withThinking) => JSON.stringify({
         contents: [{ role: "user", parts: contentParts }],
-        generationConfig: { responseMimeType: "application/json", temperature: 0.15 }
+        generationConfig: Object.assign(
+          { responseMimeType: "application/json", temperature: 0.15 },
+          // 考える時間を短くして速く返してもらう（対応していないモデルなら外して再送）
+          withThinking ? { thinkingConfig: { thinkingLevel: "low" } } : {}
+        )
       });
 
-      let lastStatus = 0;
-      for (const model of modelOrder()) {
-        const base = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
-        const url = userKey ? base : `${base}?key=${apiKey}`;
-        const res = await fetch(url, { method: "POST", headers, body });
-        if (res.ok) {
-          try { localStorage.setItem(MODEL_STORAGE, model); } catch (_) {}
-          const data = await res.json();
-          const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
-          return JSON.parse(rawText.replace(/^```(?:json)?\s*|\s*```$/g, ""));
+      const ctrl = new AbortController();
+      currentAbort = ctrl;
+      const timer = setTimeout(() => ctrl.abort("timeout"), GEMINI_TIMEOUT_MS);
+      try {
+        let lastStatus = 0;
+        for (const model of modelOrder()) {
+          const base = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+          const url = userKey ? base : `${base}?key=${apiKey}`;
+          let withThinking = !noThinkingConfig();
+          let res = await fetch(url, { method: "POST", headers, body: makeBody(withThinking), signal: ctrl.signal });
+          if (res.status === 400 && withThinking) {
+            const t = await res.text();
+            if (/thinking/i.test(t)) {
+              try { localStorage.setItem("okatazuke_no_thinkcfg", "1"); } catch (_) {}
+              withThinking = false;
+              res = await fetch(url, { method: "POST", headers, body: makeBody(false), signal: ctrl.signal });
+            } else {
+              res = new Response(t, { status: 400 });
+            }
+          }
+          if (res.ok) {
+            try { localStorage.setItem(MODEL_STORAGE, model); } catch (_) {}
+            const data = await res.json();
+            const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
+            return JSON.parse(rawText.replace(/^```(?:json)?\s*|\s*```$/g, ""));
+          }
+          lastStatus = res.status;
+          if (res.status === 404) {
+            try { if (localStorage.getItem(MODEL_STORAGE) === model) localStorage.removeItem(MODEL_STORAGE); } catch (_) {}
+            continue; // このモデルは使えない → 次の候補へ
+          }
+          const errText = await res.text().catch(() => "");
+          if (res.status === 401 || res.status === 403 || (res.status === 400 && /api.?key/i.test(errText))) {
+            throw new Error(userKey
+              ? "APIキーが無効です。⚙️設定のGemini APIキーを確認してください。"
+              : "APIキーが未設定です。⚙️設定の「Gemini APIキー」に入れて保存してください。");
+          }
+          if (res.status === 429) throw new Error("Geminiの無料枠の上限に達しました。少し待ってからもう一度お試しください。");
+          let detail = "";
+          try { detail = JSON.parse(errText)?.error?.message || ""; } catch (_) {}
+          throw new Error(`API通信エラー (${res.status})${detail ? "：" + detail.slice(0, 80) : ""}`);
         }
-        lastStatus = res.status;
-        if (res.status === 404) {
-          try { if (localStorage.getItem(MODEL_STORAGE) === model) localStorage.removeItem(MODEL_STORAGE); } catch (_) {}
-          continue; // このモデルは使えない → 次の候補へ
+        throw new Error(`使えるGeminiモデルが見つかりませんでした (${lastStatus})`);
+      } catch (err) {
+        if (ctrl.signal.aborted) {
+          throw new Error(ctrl.signal.reason === "timeout"
+            ? "AIの応答に時間がかかりすぎたため中断しました。写真の枚数を減らしてもう一度お試しください。"
+            : "解析をキャンセルしました。");
         }
-        if (res.status === 400 || res.status === 401 || res.status === 403) {
-          throw new Error(userKey
-            ? "APIキーが無効です。⚙️設定のGemini APIキーを確認してください。"
-            : "APIキーが未設定です。⚙️設定の「Gemini APIキー」に入れて保存してください。");
-        }
-        if (res.status === 429) throw new Error("Geminiの無料枠の上限に達しました。少し待ってからもう一度お試しください。");
-        throw new Error(`API通信エラー (${res.status})`);
+        throw err;
+      } finally {
+        clearTimeout(timer);
+        if (currentAbort === ctrl) currentAbort = null;
       }
-      throw new Error(`使えるGeminiモデルが見つかりませんでした (${lastStatus})`);
+    }
+
+    // 送信用に写真を小さくする（画面表示用の写真はそのまま）
+    function shrinkDataUrl(dataUrl, maxDim, quality = 0.75) {
+      return new Promise((resolve) => {
+        const img = new Image();
+        img.onload = () => {
+          const scale = Math.min(1, maxDim / Math.max(img.naturalWidth, img.naturalHeight));
+          if (scale >= 1) return resolve(dataUrl);
+          const c = document.createElement("canvas");
+          c.width = Math.round(img.naturalWidth * scale);
+          c.height = Math.round(img.naturalHeight * scale);
+          c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+          resolve(c.toDataURL("image/jpeg", quality));
+        };
+        img.onerror = () => resolve(dataUrl);
+        img.src = dataUrl;
+      });
     }
 
     // 決定論的スコア算出
@@ -1348,6 +1405,18 @@
       document.getElementById("stepCard").classList.add("hidden");
       document.getElementById("completeCard").classList.add("hidden");
       document.getElementById("loadingBox").classList.remove("hidden");
+      const startedAt = Date.now();
+      const elapsedEl = document.getElementById("loadingElapsed");
+      const subEl = document.getElementById("loadingSubText");
+      elapsedEl.textContent = "経過 0秒";
+      subEl.textContent = activeMediaList.length > 1
+        ? `${activeMediaList.length}枚の写真をつないで片付け順を組み立てています（30秒ほどかかることがあります）`
+        : "写真から散らかった物としまう場所を探しています";
+      clearInterval(window._elapsedTimer);
+      window._elapsedTimer = setInterval(() => {
+        const sec = Math.round((Date.now() - startedAt) / 1000);
+        elapsedEl.textContent = `経過 ${sec}秒`;
+      }, 1000);
 
       try {
         const hasBaseline = baselineImages.length > 0;
@@ -1409,18 +1478,27 @@
         contentParts.push({ text: introText });
 
         if (hasBaseline) {
-          baselineImages.forEach((bUrl, i) => {
+          for (let i = 0; i < baselineImages.length; i++) {
+            const small = await shrinkDataUrl(baselineImages[i], 600);
             contentParts.push({ text: `【きれいな基準写真 ${i + 1}】` });
-            contentParts.push({ inlineData: { mimeType: "image/jpeg", data: bUrl.split(",")[1] } });
-          });
+            contentParts.push({ inlineData: { mimeType: "image/jpeg", data: small.split(",")[1] } });
+          }
         }
 
-        activeMediaList.forEach((m, i) => {
+        // 枚数が多いほど1枚を小さくして送る（1〜2枚: 900px / 3〜4枚: 720px / 5枚以上: 600px）
+        const sendDim = activeMediaList.length <= 2 ? 900 : activeMediaList.length <= 4 ? 720 : 600;
+        for (let i = 0; i < activeMediaList.length; i++) {
+          const small = await shrinkDataUrl(activeMediaList[i].dataUrl, sendDim);
           contentParts.push({ text: `【現在の部屋 写真${i + 1}】` });
-          contentParts.push({ inlineData: { mimeType: "image/jpeg", data: m.dataUrl.split(",")[1] } });
-        });
+          contentParts.push({ inlineData: { mimeType: "image/jpeg", data: small.split(",")[1] } });
+        }
 
-        const result = await callGeminiWithLabeledParts(contentParts);
+        let result;
+        try {
+          result = await callGeminiWithLabeledParts(contentParts);
+        } finally {
+          clearInterval(window._elapsedTimer);
+        }
         const rawItems = Array.isArray(result.items) ? result.items : [];
         allDetectedSteps = optimizeCrossSpaceSteps(rawItems, false, activeMediaList.length);
         currentSteps = isQuickMode
@@ -2014,6 +2092,10 @@
     const settingsModal = document.getElementById("settingsModal");
     document.getElementById("openSettingsBtn").addEventListener("click", () => settingsModal.classList.remove("hidden"));
     document.getElementById("closeSettingsBtn").addEventListener("click", () => settingsModal.classList.add("hidden"));
+
+    document.getElementById("cancelAnalyzeBtn").addEventListener("click", () => {
+      if (currentAbort) currentAbort.abort("cancel");
+    });
 
     // APIキーの保存
     (function setupApiKeyUI() {
