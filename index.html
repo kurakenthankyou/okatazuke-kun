@@ -335,6 +335,7 @@
             🔊
           </button>
         </div>
+        <p id="voiceDebug" class="hidden -mt-2 px-1 text-[10px] font-bold text-slate-400 break-all"></p>
 
         <!-- 音声指示テキスト -->
         <div class="bg-emerald-50/50 rounded-2xl p-3.5 border border-emerald-100/80">
@@ -483,7 +484,7 @@
   <div id="settingsModal" class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-xs z-50 flex items-end sm:items-center justify-center p-4">
     <div class="bg-white w-full max-w-md rounded-3xl p-6 space-y-4 shadow-2xl max-h-[85vh] overflow-y-auto">
       <div class="flex items-center justify-between">
-        <h3 class="text-lg font-black text-slate-800">設定 <span class="text-[10px] font-bold text-slate-400">v10</span></h3>
+        <h3 class="text-lg font-black text-slate-800">設定 <span class="text-[10px] font-bold text-slate-400">v11</span></h3>
         <button id="closeSettingsBtn" type="button" class="w-8 h-8 rounded-full bg-slate-100 text-slate-500 font-bold">✕</button>
       </div>
 
@@ -665,7 +666,7 @@
           isHandsFreeOn = true;
           updateMicButtonUI(true);
           micCooldownUntil = Date.now() + 700;
-          try { recognition.start(); } catch (_) {}
+          startListening(false);
         }
         return true;
       } catch (_) {
@@ -725,75 +726,138 @@
       await restoreActiveSessionIfAny();
     }
 
-    // 音声読み上げ（読み上げ中は音声認識を一時停止して誤反応を防ぐ）
+    // ===== 音声読み上げとハンズフリー（iPhone Safari の制約に合わせた実装） =====
+    // ・iPhone は「読み上げ」と「聞き取り」を同時にできない → 読み上げ中は聞き取りを止め、終わったら再開
+    // ・iPhone は聞き取りが一言ごとに終わる → 終わるたびに自動で再開
+    // ・タップなしで再開できない端末では「タップで再開」ボタンに切り替える
+    let recActive = false;
+    let priming = false;          // トップ画面での権限確認中
+    let needsTap = false;         // 自動再開できず、タップ待ち
+    let startWatchdog = null;
+    const voiceLog = [];
+
+    function vlog(msg) {
+      const t = new Date();
+      voiceLog.push(`${String(t.getMinutes()).padStart(2, "0")}:${String(t.getSeconds()).padStart(2, "0")} ${msg}`);
+      while (voiceLog.length > 4) voiceLog.shift();
+      const el = document.getElementById("voiceDebug");
+      if (el) el.textContent = voiceLog.join("  ｜  ");
+      console.log("[voice]", msg);
+    }
+    const stepVisible = () => !document.getElementById("stepCard").classList.contains("hidden");
+
     function speak(text) {
       if (!document.getElementById("voiceToggle").checked) return;
       if (!("speechSynthesis" in window)) return;
       window.speechSynthesis.cancel();
       isSpeakingNow = true;
+      if (recActive) { vlog("読み上げのため聞き取り停止"); stopListening(); }
       const uttr = new SpeechSynthesisUtterance(text);
       uttr.lang = "ja-JP";
       uttr.rate = 1.05;
-      uttr.onend = () => {
+      window._currentUtterance = uttr; // Safari で途中破棄されて終了通知が来なくなるのを防ぐ
+      let finished = false;
+      const done = () => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(window._ttsSafety);
         isSpeakingNow = false;
-        micCooldownUntil = Date.now() + 500;
+        micCooldownUntil = Date.now() + 400;
+        if (isHandsFreeOn && stepVisible()) setTimeout(() => startListening(false), 250);
       };
-      uttr.onerror = () => { isSpeakingNow = false; };
+      uttr.onend = done;
+      uttr.onerror = done;
+      // 終了通知が来ない端末向けの保険：文字数から読み上げ時間を見積もって必ず再開する
+      clearTimeout(window._ttsSafety);
+      window._ttsSafety = setTimeout(done, Math.min(15000, 1200 + text.length * 170));
       window.speechSynthesis.speak(uttr);
     }
 
-    // ハンズフリー連続音声認識（「できた」「次へ」「OK」で自動遷移・画面リセット防止ガード付き）
+    function setNeedsTap(on) {
+      needsTap = on;
+      updateMicButtonUI(isHandsFreeOn);
+    }
+
+    function startListening(fromGesture) {
+      if (!recognition || !isHandsFreeOn || recActive || isSpeakingNow) return;
+      if (!priming && !stepVisible()) return;
+      try {
+        recognition.start();
+        vlog(fromGesture ? "聞き取り開始（タップ）" : "聞き取り開始（自動）");
+        clearTimeout(startWatchdog);
+        // 開始の合図が来なければ、この端末は自動再開できないと判断してタップ待ちにする
+        startWatchdog = setTimeout(() => {
+          if (!recActive && isHandsFreeOn) { vlog("開始されず→タップ待ち"); setNeedsTap(true); }
+        }, 2000);
+      } catch (e) {
+        vlog(`開始失敗 ${e.name || e}`);
+        if (!fromGesture) setNeedsTap(true);
+      }
+    }
+
+    function stopListening() {
+      clearTimeout(startWatchdog);
+      try { recognition && recognition.abort(); } catch (_) {}
+    }
+
     function setupSpeechRecognition() {
       if (!canUseVoiceRecognition) return;
       recognition = new SRClass();
       recognition.lang = "ja-JP";
       recognition.continuous = true;
-      recognition.interimResults = false;
+      recognition.interimResults = true; // iPhone は確定前に切れることがあるので途中結果も見る
+      recognition.maxAlternatives = 3;
 
       recognition.onstart = () => {
-        if (isHandsFreeOn) {
-          document.getElementById("voiceHeardHint").textContent = "マイク待機中…「できた」で次へ";
+        recActive = true;
+        clearTimeout(startWatchdog);
+        setNeedsTap(false);
+        vlog("聞き取り中");
+        document.getElementById("voiceHeardHint").textContent = "聞き取り中…「できた」で次へ";
+        if (priming && !stepVisible()) {
+          // トップ画面での許可確認だけなので止める
+          setTimeout(() => { priming = false; if (!stepVisible()) stopListening(); }, 600);
         }
       };
 
       recognition.onresult = (event) => {
-        if (!isHandsFreeOn || isSpeakingNow || Date.now() < micCooldownUntil) return;
-        if (document.getElementById("stepCard").classList.contains("hidden")) return;
-
-        const lastIdx = event.results.length - 1;
-        const transcript = event.results[lastIdx][0].transcript.trim();
-        if (!transcript) return;
-
-        document.getElementById("voiceHeardHint").textContent = `聞き取り: 「${transcript}」`;
-
-        if (/(できた|おわった|終わった|つぎ|次|オッケー|OK|おっけー|完了|おわり)/i.test(transcript)) {
+        if (!isHandsFreeOn || isSpeakingNow || Date.now() < micCooldownUntil || !stepVisible()) return;
+        let heard = "";
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          for (let k = 0; k < event.results[i].length; k++) heard += " " + event.results[i][k].transcript;
+        }
+        heard = heard.trim();
+        if (!heard) return;
+        document.getElementById("voiceHeardHint").textContent = `聞き取り:「${heard.slice(0, 20)}」`;
+        if (/(できた|でけた|出来た|おわった|終わった|つぎ|次|オッケー|OK|おっけー|完了|おわり|ネクスト)/i.test(heard)) {
+          vlog(`「${heard.slice(0, 10)}」→次へ`);
           micCooldownUntil = Date.now() + 1500;
-          setTimeout(() => {
-            if (!document.getElementById("stepCard").classList.contains("hidden")) {
-              advanceToNextStep();
-            }
-          }, 200);
+          stopListening(); // 聞き取った文字をリセット（読み上げ後に再開される）
+          setTimeout(() => { if (stepVisible()) advanceToNextStep(); }, 150);
         }
       };
 
       recognition.onerror = (event) => {
-        console.warn("SpeechRecognition error:", event.error);
+        vlog(`エラー ${event.error}`);
+        if (event.error === "no-speech" || event.error === "aborted") return; // 無音・中断は再開で対応
         if (event.error === "not-allowed" || event.error === "service-not-allowed") {
           isHandsFreeOn = false;
-          updateMicButtonUI(false);
+          priming = false;
+          setNeedsTap(false);
           document.getElementById("preMicToggle").checked = false;
-          document.getElementById("voiceHeardHint").textContent = "マイク権限がオフです";
-          showMessage("マイクの使用が許可されていません。ブラウザ設定をご確認ください。");
+          showMessage(event.error === "service-not-allowed"
+            ? "音声認識が使えません。iPhoneの「設定 > Siri」で「Siriに話しかける」か、「設定 > 一般 > キーボード」で「音声入力」をオンにしてください。"
+            : "マイクが許可されていません。iPhoneの「設定 > Safari > マイク」を「確認」か「許可」にして、ページを再読み込みしてください。");
+        } else if (event.error === "audio-capture") {
+          showMessage("マイクを使えませんでした。ほかのアプリがマイクを使っていないか確認してください。");
         }
       };
 
       recognition.onend = () => {
-        if (isHandsFreeOn && !document.getElementById("stepCard").classList.contains("hidden")) {
-          setTimeout(() => {
-            if (isHandsFreeOn && !document.getElementById("stepCard").classList.contains("hidden")) {
-              try { recognition.start(); } catch (_) {}
-            }
-          }, 200);
+        recActive = false;
+        vlog("聞き取り終了");
+        if (isHandsFreeOn && !isSpeakingNow && stepVisible()) {
+          setTimeout(() => startListening(false), 300); // 一言ごとに終わるので自動で再開
         }
       };
     }
@@ -803,8 +867,14 @@
       const textEl = document.getElementById("micBtnText");
       const preToggle = document.getElementById("preMicToggle");
       if (preToggle) preToggle.checked = active;
+      const dbg = document.getElementById("voiceDebug");
+      if (dbg) dbg.classList.toggle("hidden", !active);
 
-      if (active) {
+      if (active && needsTap) {
+        btn.className = "shrink-0 whitespace-nowrap px-3 py-1.5 rounded-xl bg-amber-500 text-white text-xs font-black flex items-center gap-1.5 mic-active transition";
+        textEl.textContent = "タップで聞き取る";
+        document.getElementById("voiceHeardHint").textContent = "この端末はタップが必要です";
+      } else if (active) {
         btn.className = "shrink-0 whitespace-nowrap px-3 py-1.5 rounded-xl bg-rose-500 text-white text-xs font-black flex items-center gap-1.5 mic-active transition";
         textEl.textContent = "声で次へ ON";
       } else {
@@ -814,49 +884,41 @@
       }
     }
 
-    function setHandsFreeState(nextState, startListeningNow = true) {
+    function setHandsFreeState(nextState, fromGesture = true) {
       if (!canUseVoiceRecognition || !recognition) return;
       isHandsFreeOn = nextState;
-      updateMicButtonUI(isHandsFreeOn);
+      setNeedsTap(false);
       saveActiveSession();
-
-      if (isHandsFreeOn && startListeningNow) {
-        micCooldownUntil = Date.now() + 700;
-        document.getElementById("voiceHeardHint").textContent = "マイク起動中…";
-        try {
-          recognition.start();
-        } catch (err) {
-          console.warn("recognition start:", err);
-        }
-      } else if (!isHandsFreeOn) {
-        try { recognition.stop(); } catch (_) {}
+      if (isHandsFreeOn) {
+        micCooldownUntil = Date.now() + 500;
+        startListening(fromGesture);
+      } else {
+        stopListening();
       }
     }
 
-    // トップ画面での事前マイク許可トグル
+    // トップ画面での事前マイク許可（タップの瞬間に一度聞き取りを始めて許可ダイアログを出す）
     document.getElementById("preMicToggle").addEventListener("change", (e) => {
-      const checked = e.target.checked;
-      if (checked) {
-        // トップ画面で一度認識を開始して権限ダイアログを済ませる
-        isHandsFreeOn = true;
-        updateMicButtonUI(true);
-        try {
-          recognition.start();
-          setTimeout(() => {
-            if (document.getElementById("stepCard").classList.contains("hidden")) {
-              try { recognition.stop(); } catch (_) {}
-            }
-          }, 1200);
-        } catch (_) {}
+      if (e.target.checked) {
+        priming = true;
+        setHandsFreeState(true, true);
       } else {
-        setHandsFreeState(false, false);
+        priming = false;
+        setHandsFreeState(false);
       }
     });
 
     document.getElementById("toggleHandsFreeBtn").addEventListener("click", (e) => {
       e.preventDefault();
       e.stopPropagation();
-      setHandsFreeState(!isHandsFreeOn, true);
+      if (isHandsFreeOn && (needsTap || !recActive)) {
+        window.speechSynthesis && window.speechSynthesis.cancel(); // 読み上げ中でもタップしたら聞き取りを優先
+        isSpeakingNow = false;
+        setNeedsTap(false);
+        startListening(true);
+      } else {
+        setHandsFreeState(!isHandsFreeOn, true);
+      }
     });
 
     // ---- 画像読み込み（HEIC/HEIF 対応） ----
@@ -1566,7 +1628,8 @@
 
         if (isHandsFreeOn && canUseVoiceRecognition && recognition) {
           micCooldownUntil = Date.now() + 800;
-          try { recognition.start(); } catch (_) {}
+          // 最初の読み上げが終わったら speak() 側で聞き取りを再開する。読み上げがオフなら今始める
+          if (!document.getElementById("voiceToggle").checked) startListening(false);
         }
 
       } catch (err) {
@@ -1856,8 +1919,8 @@
 
         if (isHandsFreeOn && recognition) {
           isHandsFreeOn = false;
-          updateMicButtonUI(false);
-          try { recognition.stop(); } catch (_) {}
+          setNeedsTap(false);
+          stopListening();
         }
 
         // 片付けた物を除いた残りで推定（後で「片付いた部屋」の写真をAIが判定して上書き）
@@ -1878,6 +1941,7 @@
 
     document.getElementById("nextStepBtn").addEventListener("click", () => {
       advanceToNextStep();
+      if (isHandsFreeOn && needsTap) { setNeedsTap(false); window.speechSynthesis && window.speechSynthesis.cancel(); isSpeakingNow = false; startListening(true); }
     });
 
     // 片付いた後の写真撮影 → ビフォーアフター比較＆達成カード生成
